@@ -27,10 +27,15 @@ bool HasUpdate();
 void SetupUpdate(
 	not_null<Ui::VerticalLayout*> container,
 	Fn<void(Type)> showOther);
+void SetupWindowTitleContent(
+	Window::SessionController *controller,
+	not_null<Ui::VerticalLayout*> container);
 void SetupSystemIntegrationContent(
 	Window::SessionController *controller,
 	not_null<Ui::VerticalLayout*> container);
-void SetupAnimations(not_null<Ui::VerticalLayout*> container);
+void SetupAnimations(
+	not_null<Window::Controller*> window,
+	not_null<Ui::VerticalLayout*> container);
 
 class Advanced : public Section<Advanced> {
 public:

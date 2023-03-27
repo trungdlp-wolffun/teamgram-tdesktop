@@ -50,7 +50,7 @@ constexpr auto kDocumentUploadPartSize4 = 512 * 1024;
 constexpr auto kUploadRequestInterval = crl::time(500);
 
 // How much time without upload causes additional session kill.
-constexpr auto kKillSessionTimeout = 15 * crl::time(000);
+constexpr auto kKillSessionTimeout = 15 * crl::time(1000);
 
 [[nodiscard]] const char *ThumbnailFormat(const QString &mime) {
 	return Core::IsMimeSticker(mime) ? "WEBP" : "JPG";
@@ -261,6 +261,8 @@ void Uploader::sendProgressUpdate(
 		if (history->peer->isMegagroup()) {
 			manager.update(history, replyTo, type, progress);
 		}
+	} else if (history->isForum()) {
+		manager.update(history, item->topicRootId(), type, progress);
 	}
 	_api->session().data().requestItemRepaint(item);
 }
@@ -455,11 +457,11 @@ void Uploader::sendNext() {
 					: std::vector<MTPInputDocument>();
 				if (uploadingData.type() == SendMediaType::Photo) {
 					auto photoFilename = uploadingData.filename();
-					if (!photoFilename.endsWith(qstr(".jpg"), Qt::CaseInsensitive)) {
+					if (!photoFilename.endsWith(u".jpg"_q, Qt::CaseInsensitive)) {
 						// Server has some extensions checking for inputMediaUploadedPhoto,
 						// so force the extension to be .jpg anyway. It doesn't matter,
 						// because the filename from inputFile is not used anywhere.
-						photoFilename += qstr(".jpg");
+						photoFilename += u".jpg"_q;
 					}
 					const auto md5 = uploadingData.file
 						? uploadingData.file->filemd5
@@ -500,7 +502,7 @@ void Uploader::sendNext() {
 						}
 						const auto thumbFilename = uploadingData.file
 							? uploadingData.file->thumbname
-							: (qsl("thumb.") + uploadingData.media.thumbExt);
+							: (u"thumb."_q + uploadingData.media.thumbExt);
 						const auto thumbMd5 = uploadingData.file
 							? uploadingData.file->thumbmd5
 							: uploadingData.media.jpeg_md5;

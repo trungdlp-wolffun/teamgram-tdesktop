@@ -29,7 +29,6 @@ class PowerSaveBlocker;
 
 namespace Data {
 class PhotoMedia;
-class CloudImageView;
 class GroupCall;
 } // namespace Data
 
@@ -95,6 +94,7 @@ public:
 	void hideLayer(anim::type animated = anim::type::normal);
 
 	void minimize();
+	void toggleFullScreen();
 	void close();
 	void showAndActivate();
 	void closeBeforeDestroy();
@@ -134,7 +134,6 @@ private:
 
 	bool handleClose();
 	void startScheduledNow();
-	void toggleFullScreen();
 	void trackControls(bool track, bool force = false);
 	void raiseControls();
 	void enlargeVideo();

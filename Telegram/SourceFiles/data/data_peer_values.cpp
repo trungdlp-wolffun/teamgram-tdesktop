@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_chat.h"
 #include "data/data_user.h"
 #include "data/data_changes.h"
+#include "data/data_forum_topic.h"
 #include "data/data_session.h"
 #include "data/data_message_reactions.h"
 #include "main/main_session.h"
@@ -163,89 +164,128 @@ inline auto DefaultRestrictionValue(
 	return SingleFlagValue(DefaultRestrictionsValue(chat), flag);
 }
 
-rpl::producer<bool> CanWriteValue(UserData *user) {
-	using namespace rpl::mappers;
-
-	if (user->isRepliesChat()) {
-		return rpl::single(false);
+// Duplicated in CanSendAnyOf().
+[[nodiscard]] rpl::producer<bool> CanSendAnyOfValue(
+		not_null<Thread*> thread,
+		ChatRestrictions rights,
+		bool forbidInForums) {
+	if (const auto topic = thread->asTopic()) {
+		using Flag = ChannelDataFlag;
+		const auto mask = Flag()
+			| Flag::Left
+			| Flag::JoinToWrite
+			| Flag::HasLink
+			| Flag::Forbidden
+			| Flag::Creator;
+		const auto channel = topic->channel();
+		return rpl::combine(
+			PeerFlagsValue(channel.get(), mask),
+			RestrictionsValue(channel, rights),
+			DefaultRestrictionsValue(channel, rights),
+			AdminRightsValue(channel, ChatAdminRight::ManageTopics),
+			topic->session().changes().topicFlagsValue(
+				topic,
+				TopicUpdate::Flag::Closed),
+			[=](
+					ChannelDataFlags flags,
+					ChatRestrictions sendRestriction,
+					ChatRestrictions defaultSendRestriction,
+					auto,
+					auto) {
+				const auto notAmInFlags = Flag::Left | Flag::Forbidden;
+				const auto allowed = !(flags & notAmInFlags)
+					|| ((flags & Flag::HasLink)
+						&& !(flags & Flag::JoinToWrite));
+				return allowed
+					&& ((flags & Flag::Creator)
+						|| (!sendRestriction && !defaultSendRestriction))
+					&& (!topic->closed() || topic->canToggleClosed());
+			});
 	}
-	return PeerFlagValue(user, UserDataFlag::Deleted)
-		| rpl::map(!_1);
+	return CanSendAnyOfValue(thread->peer(), rights, forbidInForums);
 }
 
-rpl::producer<bool> CanWriteValue(ChatData *chat) {
-	using namespace rpl::mappers;
-	const auto mask = 0
-		| ChatDataFlag::Deactivated
-		| ChatDataFlag::Forbidden
-		| ChatDataFlag::Left
-		| ChatDataFlag::Creator;
-	return rpl::combine(
-		PeerFlagsValue(chat, mask),
-		AdminRightsValue(chat),
-		DefaultRestrictionValue(
-			chat,
-			ChatRestriction::SendMessages),
-		[](
+// Duplicated in CanSendAnyOf().
+[[nodiscard]] rpl::producer<bool> CanSendAnyOfValue(
+		not_null<PeerData*> peer,
+		ChatRestrictions rights,
+		bool forbidInForums) {
+	if (const auto user = peer->asUser()) {
+		if (user->isRepliesChat()) {
+			return rpl::single(false);
+		}
+		using namespace rpl::mappers;
+		const auto other = rights & ~(ChatRestriction::SendVoiceMessages
+			| ChatRestriction::SendVideoMessages);
+		if (other) {
+			return PeerFlagValue(user, UserDataFlag::Deleted)
+				| rpl::map(!_1);
+		}
+		const auto mask = UserDataFlag::Deleted
+			| UserDataFlag::VoiceMessagesForbidden;
+		return PeerFlagsValue(user, mask) | rpl::map(!_1);
+	} else if (const auto chat = peer->asChat()) {
+		const auto mask = ChatDataFlag()
+			| ChatDataFlag::Deactivated
+			| ChatDataFlag::Forbidden
+			| ChatDataFlag::Left
+			| ChatDataFlag::Creator;
+		return rpl::combine(
+			PeerFlagsValue(chat, mask),
+			AdminRightsValue(chat),
+			DefaultRestrictionsValue(chat, rights),
+			[rights](
 				ChatDataFlags flags,
 				Data::Flags<ChatAdminRights>::Change adminRights,
-				bool defaultSendMessagesRestriction) {
-			const auto amOutFlags = 0
+				ChatRestrictions defaultSendRestrictions) {
+			const auto amOutFlags = ChatDataFlag()
 				| ChatDataFlag::Deactivated
 				| ChatDataFlag::Forbidden
 				| ChatDataFlag::Left;
-			return !(flags & amOutFlags)
-				&& ((flags & ChatDataFlag::Creator)
-					|| (adminRights.value != ChatAdminRights(0))
-					|| !defaultSendMessagesRestriction);
+		return !(flags & amOutFlags)
+			&& ((flags & ChatDataFlag::Creator)
+				|| (adminRights.value != ChatAdminRights(0))
+				|| (rights & ~defaultSendRestrictions));
 		});
-}
-
-rpl::producer<bool> CanWriteValue(ChannelData *channel) {
-	using Flag = ChannelDataFlag;
-	const auto mask = 0
-		| Flag::Left
-		| Flag::JoinToWrite
-		| Flag::HasLink
-		| Flag::Forbidden
-		| Flag::Creator
-		| Flag::Broadcast;
-	return rpl::combine(
-		PeerFlagsValue(channel, mask),
-		AdminRightValue(
-			channel,
-			ChatAdminRight::PostMessages),
-		RestrictionValue(
-			channel,
-			ChatRestriction::SendMessages),
-		DefaultRestrictionValue(
-			channel,
-			ChatRestriction::SendMessages),
-		[](
-				ChannelDataFlags flags,
-				bool postMessagesRight,
-				bool sendMessagesRestriction,
-				bool defaultSendMessagesRestriction) {
-			const auto notAmInFlags = Flag::Left | Flag::Forbidden;
-			const auto allowed = !(flags & notAmInFlags)
-				|| ((flags & Flag::HasLink) && !(flags & Flag::JoinToWrite));
-			return allowed && (postMessagesRight
-					|| (flags & Flag::Creator)
-					|| (!(flags & Flag::Broadcast)
-						&& !sendMessagesRestriction
-						&& !defaultSendMessagesRestriction));
-		});
-}
-
-rpl::producer<bool> CanWriteValue(not_null<PeerData*> peer) {
-	if (auto user = peer->asUser()) {
-		return CanWriteValue(user);
-	} else if (auto chat = peer->asChat()) {
-		return CanWriteValue(chat);
-	} else if (auto channel = peer->asChannel()) {
-		return CanWriteValue(channel);
+	} else if (const auto channel = peer->asChannel()) {
+		using Flag = ChannelDataFlag;
+		const auto mask = Flag()
+			| Flag::Left
+			| Flag::Forum
+			| Flag::JoinToWrite
+			| Flag::HasLink
+			| Flag::Forbidden
+			| Flag::Creator
+			| Flag::Broadcast;
+		return rpl::combine(
+			PeerFlagsValue(channel, mask),
+			AdminRightValue(
+				channel,
+				ChatAdminRight::PostMessages),
+			RestrictionsValue(channel, rights),
+			DefaultRestrictionsValue(channel, rights),
+			[=](
+					ChannelDataFlags flags,
+					bool postMessagesRight,
+					ChatRestrictions sendRestriction,
+					ChatRestrictions defaultSendRestriction) {
+				const auto notAmInFlags = Flag::Left | Flag::Forbidden;
+				const auto forumRestriction = forbidInForums
+					&& (flags & Flag::Forum);
+				const auto allowed = !(flags & notAmInFlags)
+					|| ((flags & Flag::HasLink)
+						&& !(flags & Flag::JoinToWrite));
+				const auto restricted = sendRestriction
+					| defaultSendRestriction;
+				return allowed
+					&& !forumRestriction
+					&& (postMessagesRight
+						|| (flags & Flag::Creator)
+						|| (!(flags & Flag::Broadcast)
+							&& (rights & ~restricted)));
+			});
 	}
-	Unexpected("Bad peer value in CanWriteValue");
+	Unexpected("Peer type in Data::CanSendAnyOfValue.");
 }
 
 // This is duplicated in PeerData::canPinMessages().
@@ -399,14 +439,15 @@ QString OnlineText(TimeId online, TimeId now) {
 	}
 	const auto onlineFull = base::unixtime::parse(online);
 	const auto nowFull = base::unixtime::parse(now);
+	const auto locale = QLocale();
 	if (onlineFull.date() == nowFull.date()) {
-		const auto onlineTime = onlineFull.time().toString(cTimeFormat());
+		const auto onlineTime = locale.toString(onlineFull.time(), QLocale::ShortFormat);
 		return tr::lng_status_lastseen_today(tr::now, lt_time, onlineTime);
 	} else if (onlineFull.date().addDays(1) == nowFull.date()) {
-		const auto onlineTime = onlineFull.time().toString(cTimeFormat());
+		const auto onlineTime = locale.toString(onlineFull.time(), QLocale::ShortFormat);
 		return tr::lng_status_lastseen_yesterday(tr::now, lt_time, onlineTime);
 	}
-	const auto date = onlineFull.date().toString(cDateFormat());
+	const auto date = locale.toString(onlineFull.date(), QLocale::ShortFormat);
 	return tr::lng_status_lastseen_date(tr::now, lt_date, date);
 }
 
@@ -425,15 +466,16 @@ QString OnlineTextFull(not_null<UserData*> user, TimeId now) {
 	}
 	const auto onlineFull = base::unixtime::parse(user->onlineTill);
 	const auto nowFull = base::unixtime::parse(now);
+	const auto locale = QLocale();
 	if (onlineFull.date() == nowFull.date()) {
-		const auto onlineTime = onlineFull.time().toString(cTimeFormat());
+		const auto onlineTime = locale.toString(onlineFull.time(), QLocale::ShortFormat);
 		return tr::lng_status_lastseen_today(tr::now, lt_time, onlineTime);
 	} else if (onlineFull.date().addDays(1) == nowFull.date()) {
-		const auto onlineTime = onlineFull.time().toString(cTimeFormat());
+		const auto onlineTime = locale.toString(onlineFull.time(), QLocale::ShortFormat);
 		return tr::lng_status_lastseen_yesterday(tr::now, lt_time, onlineTime);
 	}
-	const auto date = onlineFull.date().toString(cDateFormat());
-	const auto time = onlineFull.time().toString(cTimeFormat());
+	const auto date = locale.toString(onlineFull.date(), QLocale::ShortFormat);
+	const auto time = locale.toString(onlineFull.time(), QLocale::ShortFormat);
 	return tr::lng_status_lastseen_date_time(tr::now, lt_date, date, lt_time, time);
 }
 
@@ -458,8 +500,11 @@ bool OnlineTextActive(not_null<UserData*> user, TimeId now) {
 	return OnlineTextActive(user->onlineTill, now);
 }
 
-bool IsUserOnline(not_null<UserData*> user) {
-	return OnlineTextActive(user, base::unixtime::now());
+bool IsUserOnline(not_null<UserData*> user, TimeId now) {
+	if (!now) {
+		now = base::unixtime::now();
+	}
+	return OnlineTextActive(user, now);
 }
 
 bool ChannelHasActiveCall(not_null<ChannelData*> channel) {
@@ -468,18 +513,12 @@ bool ChannelHasActiveCall(not_null<ChannelData*> channel) {
 
 rpl::producer<QImage> PeerUserpicImageValue(
 		not_null<PeerData*> peer,
-		int size) {
-	return PeerUserpicImageValue(peer, size, ImageRoundRadius::Ellipse);
-}
-
-rpl::producer<QImage> PeerUserpicImageValue(
-		not_null<PeerData*> peer,
 		int size,
-		ImageRoundRadius radius) {
+		std::optional<int> radius) {
 	return [=](auto consumer) {
 		auto result = rpl::lifetime();
 		struct State {
-			std::shared_ptr<CloudImageView> view;
+			Ui::PeerUserpicView view;
 			rpl::lifetime waiting;
 			InMemoryKey key = {};
 			bool empty = true;
@@ -488,7 +527,7 @@ rpl::producer<QImage> PeerUserpicImageValue(
 		const auto state = result.make_state<State>();
 		state->push = [=] {
 			const auto key = peer->userpicUniqueKey(state->view);
-			const auto loading = state->view && !state->view->image();
+			const auto loading = Ui::PeerUserpicLoading(state->view);
 
 			if (loading && !state->waiting) {
 				peer->session().downloaderTaskFinished(
@@ -502,8 +541,10 @@ rpl::producer<QImage> PeerUserpicImageValue(
 			}
 			state->key = key;
 			state->empty = false;
-			consumer.put_next(
-				peer->generateUserpicImage(state->view, size, radius));
+			consumer.put_next(peer->generateUserpicImage(
+				state->view,
+				size,
+				radius));
 		};
 		peer->session().changes().peerFlagsValue(
 			peer,

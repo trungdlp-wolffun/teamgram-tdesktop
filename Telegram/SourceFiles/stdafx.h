@@ -119,7 +119,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/basic_types.h"
 #include "logs.h"
-#include "settings.h"
 #include "core/utils.h"
 #include "config.h"
 
@@ -130,6 +129,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/palette.h"
 #include "styles/style_basic.h"
 
+#include "ui/arc_angles.h"
 #include "ui/image/image_location.h"
 #include "ui/text/text.h"
 

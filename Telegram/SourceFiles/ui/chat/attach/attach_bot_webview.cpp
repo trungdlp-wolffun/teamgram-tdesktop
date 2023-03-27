@@ -32,7 +32,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonArray>
-#include <QtGui/QDesktopServices>
+#include <QtGui/QGuiApplication>
+#include <QtGui/QClipboard>
 
 namespace Ui::BotWebView {
 namespace {
@@ -92,30 +93,6 @@ constexpr auto kLightnessDelta = 32;
 			? kLightnessDelta
 			: -kLightnessDelta),
 		alpha);
-}
-
-[[nodiscard]] QString EncodeForJs(const QString &text) {
-	auto result = QString();
-	for (auto ch = text.data(), e = ch + text.size(); ch != e; ++ch) {
-		const auto code = ch->unicode();
-		const auto hex = [&](int value) {
-			const auto v = value & 0x0F;
-			return QChar((v < 10) ? ('0' + v) : 'A' + (v - 10));
-		};
-		if (code >= 32 && code < 128) {
-			if (code == '\\' || code == '"' || code == '\'') {
-				result += QChar('\\');
-			}
-			result += *ch;
-		} else {
-			result += u"\\u"_q
-				+ hex(code >> 12)
-				+ hex(code >> 8)
-				+ hex(code >> 4)
-				+ hex(code);
-		}
-	}
-	return result;
 }
 
 } // namespace
@@ -273,7 +250,9 @@ void Panel::Button::setupProgressGeometry() {
 
 	_progress->widget.show();
 	_progress->widget.raise();
-	if (_progress->shown) {
+	if (_progress->shown
+		&& Ui::AppInFocus()
+		&& Ui::InFocusChain(_progress->widget.window())) {
 		_progress->widget.setFocus();
 	}
 }
@@ -303,17 +282,16 @@ void Panel::Button::paintEvent(QPaintEvent *e) {
 	const auto textTop = _st.padding.top() + _st.textTop;
 	const auto textLeft = padding + (space - textWidth) / 2;
 	p.setPen(_fg);
-	_text.drawLeftElided(p, textLeft, textTop, space, width());
+	_text.drawLeftElided(p, textLeft, textTop, textWidth, width());
 }
 
 QImage Panel::Button::prepareRippleMask() const {
-	const auto drawMask = [&](QPainter &p) {
+	return RippleAnimation::MaskByDrawer(size(), false, [&](QPainter &p) {
 		p.drawRoundedRect(
 			rect().marginsAdded({ 0, st::callRadius * 2, 0, 0 }),
 			st::callRadius,
 			st::callRadius);
-	};
-	return RippleAnimation::maskByDrawer(size(), false, drawMask);
+	});
 }
 
 QPoint Panel::Button::prepareRippleStartPosition() const {
@@ -340,20 +318,24 @@ Panel::Panel(
 	Fn<bool(QString)> handleLocalUri,
 	Fn<void(QString)> handleInvoice,
 	Fn<void(QByteArray)> sendData,
+	Fn<void(std::vector<QString>, QString)> switchInlineQuery,
 	Fn<void()> close,
 	QString phone,
 	MenuButtons menuButtons,
 	Fn<void(MenuButton)> handleMenuButton,
-	Fn<Webview::ThemeParams()> themeParams)
+	Fn<Webview::ThemeParams()> themeParams,
+	bool allowClipboardRead)
 : _userDataPath(userDataPath)
 , _handleLocalUri(std::move(handleLocalUri))
 , _handleInvoice(std::move(handleInvoice))
 , _sendData(std::move(sendData))
+, _switchInlineQuery(std::move(switchInlineQuery))
 , _close(std::move(close))
 , _phone(phone)
 , _menuButtons(menuButtons)
 , _handleMenuButton(std::move(handleMenuButton))
-, _widget(std::make_unique<SeparatePanel>()) {
+, _widget(std::make_unique<SeparatePanel>())
+, _allowClipboardRead(allowClipboardRead) {
 	_widget->setInnerSize(st::paymentsPanelSize);
 	_widget->setWindowFlag(Qt::WindowStaysOnTopHint, false);
 
@@ -376,7 +358,7 @@ Panel::Panel(
 		postEvent("back_button_pressed");
 	}, _widget->lifetime());
 
-	rpl::combine(
+	rpl::merge(
 		style::PaletteChanged(),
 		_themeUpdateForced.events()
 	) | rpl::filter([=] {
@@ -645,12 +627,16 @@ bool Panel::createWebview() {
 			_close();
 		} else if (command == "web_app_data_send") {
 			sendDataMessage(arguments);
+		} else if (command == "web_app_switch_inline_query") {
+			switchInlineQueryMessage(arguments);
 		} else if (command == "web_app_setup_main_button") {
 			processMainButtonMessage(arguments);
 		} else if (command == "web_app_setup_back_button") {
 			processBackButtonMessage(arguments);
 		} else if (command == "web_app_request_theme") {
 			_themeUpdateForced.fire({});
+		} else if (command == "web_app_request_viewport") {
+			sendViewport();
 		} else if (command == "web_app_open_tg_link") {
 			openTgLink(arguments);
 		} else if (command == "web_app_open_link") {
@@ -663,6 +649,8 @@ bool Panel::createWebview() {
 			requestPhone();
 		} else if (command == "web_app_setup_closing_behavior") {
 			setupClosingBehaviour(arguments);
+		} else if (command == "web_app_read_text_from_clipboard") {
+			requestClipboardText(arguments);
 		}
 	});
 
@@ -693,6 +681,13 @@ postEvent: function(eventType, eventData) {
 	return true;
 }
 
+void Panel::sendViewport() {
+	postEvent("viewport_changed", "{ "
+		"height: window.innerHeight, "
+		"is_state_stable: true, "
+		"is_expanded: true }");
+}
+
 void Panel::setTitle(rpl::producer<QString> title) {
 	_widget->setTitle(std::move(title));
 }
@@ -709,6 +704,38 @@ void Panel::sendDataMessage(const QJsonObject &args) {
 		return;
 	}
 	_sendData(data.toUtf8());
+}
+
+void Panel::switchInlineQueryMessage(const QJsonObject &args) {
+	if (args.isEmpty()) {
+		_close();
+		return;
+	}
+	const auto query = args["query"].toString();
+	if (query.isEmpty()) {
+		LOG(("BotWebView Error: Bad 'query' in switchInlineQueryMessage."));
+		_close();
+		return;
+	}
+	const auto valid = base::flat_set<QString>{
+		u"users"_q,
+		u"bots"_q,
+		u"groups"_q,
+		u"channels"_q,
+	};
+	auto types = std::vector<QString>();
+	for (const auto &value : args["chat_types"].toArray()) {
+		const auto type = value.toString();
+		if (valid.contains(type)) {
+			types.push_back(type);
+		} else {
+			LOG(("BotWebView Error: "
+				"Bad chat type in switchInlineQueryMessage: %1.").arg(type));
+			types.clear();
+			break;
+		}
+	}
+	_switchInlineQuery(types, query);
 }
 
 void Panel::openTgLink(const QJsonObject &args) {
@@ -737,16 +764,10 @@ void Panel::openExternalLink(const QJsonObject &args) {
 		LOG(("BotWebView Error: Bad 'url' in openExternalLink."));
 		_close();
 		return;
+	} else if (!allowOpenLink()) {
+		return;
 	}
-	const auto now = crl::now();
-	if (_mainButtonLastClick
-		&& _mainButtonLastClick + kProcessClickTimeout >= now) {
-		_mainButtonLastClick = 0;
-		QDesktopServices::openUrl(url);
-	} else {
-		const auto string = EncodeForJs(url);
-		_webview->window.eval(("window.open(\"" + string + "\");").toUtf8());
-	}
+	File::OpenUrl(url);
 }
 
 void Panel::openInvoice(const QJsonObject &args) {
@@ -811,14 +832,9 @@ void Panel::openPopup(const QJsonObject &args) {
 		.buttons = std::move(buttons),
 	});
 	if (weak) {
-		const auto safe = [&] {
-			return QJsonDocument(
-				QJsonArray{ { QJsonValue(*result.id) } }
-			).toJson(QJsonDocument::Compact) + "[0]";
-		};
-		postEvent(
-			"popup_closed",
-			result.id ? ("\"button_id\": " + safe()) : QString());
+		postEvent("popup_closed", result.id
+			? QJsonObject{ { u"button_id"_q, *result.id } }
+			: EventData());
 	}
 }
 
@@ -841,13 +857,47 @@ void Panel::requestPhone() {
 		},
 	});
 	if (weak) {
-		postEvent(
-			"phone_requested",
-			(result.id == "share"
-				? "\"phone_number\": \"" + _phone + "\""
-				: QString()));
+		postEvent("phone_requested", (result.id == "share")
+			? QJsonObject{ { u"phone_number"_q, _phone } }
+			: EventData());
 	}
 #endif
+}
+
+void Panel::requestClipboardText(const QJsonObject &args) {
+	const auto requestId = args["req_id"];
+	if (requestId.isUndefined()) {
+		return;
+	}
+	auto result = QJsonObject();
+	result["req_id"] = requestId;
+	if (allowClipboardQuery()) {
+		result["data"] = QGuiApplication::clipboard()->text();
+	}
+	postEvent(u"clipboard_text_received"_q, result);
+}
+
+bool Panel::allowOpenLink() const {
+	const auto now = crl::now();
+	if (_mainButtonLastClick
+		&& _mainButtonLastClick + kProcessClickTimeout >= now) {
+		_mainButtonLastClick = 0;
+		return true;
+	}
+	return true;
+}
+
+bool Panel::allowClipboardQuery() const {
+	if (!_allowClipboardRead) {
+		return false;
+	}
+	const auto now = crl::now();
+	if (_mainButtonLastClick
+		&& _mainButtonLastClick + kProcessClickTimeout >= now) {
+		_mainButtonLastClick = 0;
+		return true;
+	}
+	return true;
 }
 
 void Panel::scheduleCloseWithConfirmation() {
@@ -1031,16 +1081,17 @@ void Panel::updateThemeParams(const Webview::ThemeParams &params) {
 		params.scrollBgOver,
 		params.scrollBarBg,
 		params.scrollBarBgOver);
-	postEvent("theme_changed", "\"theme_params\": " + params.json);
+	postEvent("theme_changed", "{\"theme_params\": " + params.json + "}");
 }
 
 void Panel::invoiceClosed(const QString &slug, const QString &status) {
 	if (!_webview || !_webview->window.widget()) {
 		return;
 	}
-	postEvent(
-		"invoice_closed",
-		"\"slug\": \"" + slug + "\", \"status\": \"" + status + "\"");
+	postEvent("invoice_closed", QJsonObject{
+		{ u"slug"_q, slug },
+		{ u"status"_q, status },
+	});
 	_widget->showAndActivate();
 	_hiddenForPayment = false;
 }
@@ -1050,13 +1101,21 @@ void Panel::hideForPayment() {
 	_widget->hideGetDuration();
 }
 
-void Panel::postEvent(const QString &event, const QString &data) {
+void Panel::postEvent(const QString &event) {
+	postEvent(event, {});
+}
+
+void Panel::postEvent(const QString &event, EventData data) {
+	auto written = v::is<QString>(data)
+		? v::get<QString>(data).toUtf8()
+		: QJsonDocument(
+			v::get<QJsonObject>(data)).toJson(QJsonDocument::Compact);
 	_webview->window.eval(R"(
 if (window.TelegramGameProxy) {
 	window.TelegramGameProxy.receiveEvent(
 		")"
 		+ event.toUtf8()
-		+ '"' + (data.isEmpty() ? QByteArray() : ", {" + data.toUtf8() + '}')
+		+ '"' + (written.isEmpty() ? QByteArray() : ", " + written)
 		+ R"();
 }
 )");
@@ -1087,12 +1146,6 @@ void Panel::showWebviewError(
 	case Error::NoGtkOrWebkit2Gtk:
 		rich.append(tr::lng_payments_webview_install_webkit(tr::now));
 		break;
-	case Error::MutterWM:
-		rich.append(tr::lng_payments_webview_switch_mutter(tr::now));
-		break;
-	case Error::Wayland:
-		rich.append(tr::lng_payments_webview_switch_wayland(tr::now));
-		break;
 	default:
 		rich.append(QString::fromStdString(information.details));
 		break;
@@ -1112,11 +1165,13 @@ std::unique_ptr<Panel> Show(Args &&args) {
 		std::move(args.handleLocalUri),
 		std::move(args.handleInvoice),
 		std::move(args.sendData),
+		std::move(args.switchInlineQuery),
 		std::move(args.close),
 		args.phone,
 		args.menuButtons,
 		std::move(args.handleMenuButton),
-		std::move(args.themeParams));
+		std::move(args.themeParams),
+		args.allowClipboardRead);
 	if (!result->showWebview(args.url, params, std::move(args.bottom))) {
 		const auto available = Webview::Availability();
 		if (available.error != Webview::Available::Error::None) {

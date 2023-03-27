@@ -30,7 +30,7 @@ void UnsafeOpenUrl(const QString &url) {
 			base::Platform::AppLaunchContext())) {
 			return;
 		}
-	} catch (const Glib::Error &e) {
+	} catch (const std::exception &e) {
 		LOG(("App Error: %1").arg(QString::fromStdString(e.what())));
 	}
 #endif // !DESKTOP_APP_DISABLE_DBUS_INTEGRATION
@@ -39,7 +39,7 @@ void UnsafeOpenUrl(const QString &url) {
 }
 
 void UnsafeOpenEmailLink(const QString &email) {
-	UnsafeOpenUrl(qstr("mailto:") + email);
+	UnsafeOpenUrl(u"mailto:"_q + email);
 }
 
 bool UnsafeShowOpenWith(const QString &filepath) {
@@ -60,7 +60,7 @@ void UnsafeLaunch(const QString &filepath) {
 			base::Platform::AppLaunchContext())) {
 			return;
 		}
-	} catch (const Glib::Error &e) {
+	} catch (const std::exception &e) {
 		LOG(("App Error: %1").arg(QString::fromStdString(e.what())));
 	}
 

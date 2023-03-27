@@ -32,6 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/path_shift_gradient.h"
 #include "ui/emoji_config.h"
 #include "ui/painter.h"
+#include "ui/power_saving.h"
 #include "ui/toast/toast.h"
 #include "ui/widgets/popup_menu.h"
 #include "ui/cached_round_corners.h"
@@ -70,7 +71,6 @@ constexpr auto kGrayLockOpacity = 0.3;
 
 using Data::StickersSet;
 using Data::StickersPack;
-using Data::StickersByEmojiMap;
 using SetFlag = Data::StickersSetFlag;
 
 [[nodiscard]] std::optional<QColor> ComputeImageColor(const QImage &frame) {
@@ -331,14 +331,13 @@ private:
 	std::vector<Element> _elements;
 	std::unique_ptr<Lottie::MultiPlayer> _lottiePlayer;
 
-	mutable Ui::Text::CustomEmojiColored _colored;
 	base::flat_map<
 		not_null<DocumentData*>,
 		std::unique_ptr<Ui::Text::CustomEmoji>> _customEmoji;
 	bool _repaintScheduled = false;
 
 	StickersPack _pack;
-	StickersByEmojiMap _emoji;
+	base::flat_map<EmojiPtr, StickersPack> _emoji;
 	bool _loaded = false;
 	uint64 _setId = 0;
 	uint64 _setAccessHash = 0;
@@ -730,7 +729,7 @@ void StickerSetBox::Inner::gotSet(const MTPmessages_StickerSet &set) {
 
 						p.push_back(doc);
 					}
-					_emoji.insert(original, p);
+					_emoji[original] = std::move(p);
 				}
 			});
 		}
@@ -1127,8 +1126,8 @@ void StickerSetBox::Inner::paintEvent(QPaintEvent *e) {
 	_pathGradient->startFrame(0, width(), width() / 2);
 
 	const auto now = crl::now();
-	const auto paused = _controller->isGifPausedAtLeastFor(
-		Window::GifPauseReason::Layer);
+	const auto paused = On(PowerSaving::kStickersPanel)
+		|| _controller->isGifPausedAtLeastFor(Window::GifPauseReason::Layer);
 	for (int32 i = from; i < to; ++i) {
 		for (int32 j = 0; j < _perRow; ++j) {
 			int32 index = i * _perRow + j;
@@ -1335,10 +1334,8 @@ void StickerSetBox::Inner::paintSticker(
 		(_singleSize.height() - size.height()) / 2);
 	auto lottieFrame = QImage();
 	if (element.emoji) {
-		_colored.color = st::profileVerifiedCheckBg->c;
 		element.emoji->paint(p, {
-			.preview = st::windowBgOver->c,
-			.colored = &_colored,
+			.textColor = st::windowFg->c,
 			.now = now,
 			.position = ppos,
 			.paused = paused,
@@ -1438,6 +1435,7 @@ void StickerSetBox::Inner::install() {
 }
 
 void StickerSetBox::Inner::archiveStickers() {
+	const auto toastParent = Window::Show(_controller).toastParent();
 	_api.request(MTPmessages_InstallStickerSet(
 		Data::InputStickerSet(_input),
 		MTP_boolTrue()
@@ -1445,9 +1443,9 @@ void StickerSetBox::Inner::archiveStickers() {
 		if (result.type() == mtpc_messages_stickerSetInstallResultSuccess) {
 			_setArchived.fire_copy(_setId);
 		}
-	}).fail([toastParent = Window::Show(_controller).toastParent()] {
+	}).fail(crl::guard(toastParent, [=] {
 		Ui::Toast::Show(toastParent, Lang::Hard::ServerError());
-	}).send();
+	})).send();
 }
 
 void StickerSetBox::Inner::updateItems() {

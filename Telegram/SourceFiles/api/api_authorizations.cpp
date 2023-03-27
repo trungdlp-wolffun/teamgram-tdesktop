@@ -26,6 +26,7 @@ Authorizations::Entry ParseEntry(const MTPDauthorization &data) {
 
 	result.hash = data.is_current() ? 0 : data.vhash().v;
 	result.incomplete = data.is_password_pending();
+	result.callsDisabled = data.is_call_requests_disabled();
 
 	const auto apiId = result.apiId = data.vapi_id().v;
 	const auto isTest = (apiId == TestApiId);
@@ -34,8 +35,8 @@ Authorizations::Entry ParseEntry(const MTPDauthorization &data) {
 		|| isTest;
 
 	const auto appName = isDesktop
-		? QString("Teamgram Desktop%1").arg(isTest ? " (GitHub)" : QString())
-		: qs(data.vapp_name());// +qsl(" for ") + qs(d.vplatform());
+		? u"Teamgram Desktop%1"_q.arg(isTest ? " (GitHub)" : QString())
+		: qs(data.vapp_name());// + u" for "_q + qs(d.vplatform());
 	const auto appVer = [&] {
 		const auto version = qs(data.vapp_version());
 		if (isDesktop) {
@@ -79,12 +80,16 @@ Authorizations::Entry ParseEntry(const MTPDauthorization &data) {
 		const auto nowDate = now.date();
 		const auto lastDate = lastTime.date();
 		if (lastDate == nowDate) {
-			result.active = lastTime.toString(cTimeFormat());
+			result.active = QLocale().toString(
+				lastTime.time(),
+				QLocale::ShortFormat);
 		} else if (lastDate.year() == nowDate.year()
 			&& lastDate.weekNumber() == nowDate.weekNumber()) {
 			result.active = langDayOfWeek(lastDate);
 		} else {
-			result.active = lastDate.toString(cDateFormat());
+			result.active = QLocale().toString(
+				lastDate,
+				QLocale::ShortFormat);
 		}
 	}
 	result.location = country;
@@ -131,6 +136,7 @@ void Authorizations::reload() {
 			) | ranges::views::transform([](const MTPAuthorization &d) {
 				return ParseEntry(d.c_authorization());
 			}) | ranges::to<List>;
+			refreshCallsDisabledHereFromCloud();
 			_listChanges.fire({});
 		});
 	}).fail([=] {
@@ -140,6 +146,14 @@ void Authorizations::reload() {
 
 void Authorizations::cancelCurrentRequest() {
 	_api.request(base::take(_requestId)).cancel();
+}
+
+void Authorizations::refreshCallsDisabledHereFromCloud() {
+	const auto that = ranges::find(_list, 0, &Entry::hash);
+	if (that != end(_list)
+		&& !_toggleCallsDisabledRequests.contains(0)) {
+		_callsDisabledHere = that->callsDisabled;
+	}
 }
 
 void Authorizations::requestTerminate(

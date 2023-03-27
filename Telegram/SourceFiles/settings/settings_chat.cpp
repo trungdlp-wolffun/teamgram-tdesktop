@@ -18,11 +18,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/background_preview_box.h"
 #include "boxes/download_path_box.h"
 #include "boxes/local_storage_box.h"
-#include "boxes/edit_color_box.h"
 #include "ui/wrap/vertical_layout.h"
 #include "ui/wrap/slide_wrap.h"
 #include "ui/widgets/input_fields.h"
 #include "ui/widgets/checkbox.h"
+#include "ui/widgets/color_editor.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/chat/attach/attach_extensions.h"
@@ -64,7 +64,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session_settings.h"
 #include "mainwidget.h"
 #include "mainwindow.h"
-#include "facades.h"
 #include "styles/style_chat_helpers.h" // stickersRemove
 #include "styles/style_settings.h"
 #include "styles/style_layers.h"
@@ -124,27 +123,6 @@ private:
 	rpl::event_stream<QColor> _selected;
 
 };
-
-void PaintColorButton(QPainter &p, QColor color, float64 selected) {
-	const auto size = st::settingsAccentColorSize;
-	const auto rect = QRect(0, 0, size, size);
-
-	p.setBrush(color);
-	p.setPen(Qt::NoPen);
-	p.drawEllipse(rect);
-
-	if (selected > 0.) {
-		const auto startSkip = -st::settingsAccentColorLine / 2.;
-		const auto endSkip = float64(st::settingsAccentColorSkip);
-		const auto skip = startSkip + (endSkip - startSkip) * selected;
-		auto pen = st::boxBg->p;
-		pen.setWidth(st::settingsAccentColorLine);
-		p.setBrush(Qt::NoBrush);
-		p.setPen(pen);
-		p.setOpacity(selected);
-		p.drawEllipse(QRectF(rect).marginsRemoved({ skip, skip, skip, skip }));
-	}
-}
 
 void PaintCustomButton(QPainter &p, const std::vector<QColor> &colors) {
 	Expects(colors.size() >= kCustomColorButtonParts);
@@ -230,8 +208,9 @@ void ColorsPalette::Button::paint() {
 	PainterHighQualityEnabler hq(p);
 
 	if (_colors.size() == 1) {
-		PaintColorButton(
+		PaintRoundColorButton(
 			p,
+			st::settingsAccentColorSize,
 			_colors.front(),
 			_selectedAnimation.value(_selected ? 1. : 0.));
 	} else if (_colors.size() >= kCustomColorButtonParts) {
@@ -342,17 +321,30 @@ void ColorsPalette::selectCustom(not_null<const Scheme*> scheme) {
 	const auto colorizer = Window::Theme::ColorizerFrom(
 		*scheme,
 		scheme->accentColor);
-	auto box = Box<EditColorBox>(
-		tr::lng_settings_theme_accent_title(tr::now),
-		EditColorBox::Mode::HSL,
-		(*selected)->color());
-	box->setLightnessLimits(
-		colorizer.lightnessMin,
-		colorizer.lightnessMax);
-	box->setSaveCallback(crl::guard(_outer, [=](QColor result) {
-		_selected.fire_copy(result);
+	Ui::show(Box([=](not_null<Ui::GenericBox*> box) {
+		const auto editor = box->addRow(object_ptr<ColorEditor>(
+			box,
+			ColorEditor::Mode::HSL,
+			(*selected)->color()));
+
+		const auto save = crl::guard(_outer, [=] {
+			_selected.fire_copy(editor->color());
+			box->closeBox();
+		});
+		editor->submitRequests(
+		) | rpl::start_with_next(save, editor->lifetime());
+		editor->setLightnessLimits(
+			colorizer.lightnessMin,
+			colorizer.lightnessMax);
+
+		box->setFocusCallback([=] {
+			editor->setInnerFocus();
+		});
+		box->addButton(tr::lng_settings_save(), save);
+		box->addButton(tr::lng_cancel(), [=] { box->closeBox(); });
+		box->setTitle(tr::lng_settings_theme_accent_title());
+		box->setWidth(editor->width());
 	}));
-	Ui::show(std::move(box));
 }
 
 rpl::producer<QColor> ColorsPalette::selected() const {
@@ -379,6 +371,30 @@ void ColorsPalette::updateInnerGeometry() {
 }
 
 } // namespace
+
+void PaintRoundColorButton(
+		QPainter &p,
+		int size,
+		QBrush brush,
+		float64 selected) {
+	const auto rect = QRect(0, 0, size, size);
+
+	p.setBrush(brush);
+	p.setPen(Qt::NoPen);
+	p.drawEllipse(rect);
+
+	if (selected > 0.) {
+		const auto startSkip = -st::settingsAccentColorLine / 2.;
+		const auto endSkip = float64(st::settingsAccentColorSkip);
+		const auto skip = startSkip + (endSkip - startSkip) * selected;
+		auto pen = st::boxBg->p;
+		pen.setWidth(st::settingsAccentColorLine);
+		p.setBrush(Qt::NoBrush);
+		p.setPen(pen);
+		p.setOpacity(selected);
+		p.drawEllipse(QRectF(rect).marginsRemoved({ skip, skip, skip, skip }));
+	}
+}
 
 class BackgroundRow : public Ui::RpWidget {
 public:
@@ -637,9 +653,9 @@ void ChooseFromFile(
 		not_null<Window::SessionController*> controller,
 		not_null<QWidget*> parent) {
 	auto filters = QStringList(
-		qsl("Theme files (*.tdesktop-theme *.tdesktop-palette *")
-		+ Ui::ImageExtensions().join(qsl(" *"))
-		+ qsl(")"));
+		u"Theme files (*.tdesktop-theme *.tdesktop-palette *"_q
+		+ Ui::ImageExtensions().join(u" *"_q)
+		+ u")"_q);
 	filters.push_back(FileDialog::AllFilesFilter());
 	const auto callback = crl::guard(controller, [=](
 			const FileDialog::OpenResult &result) {
@@ -675,7 +691,7 @@ void ChooseFromFile(
 	FileDialog::GetOpenPath(
 		parent.get(),
 		tr::lng_choose_image(tr::now),
-		filters.join(qsl(";;")),
+		filters.join(u";;"_q),
 		crl::guard(parent, callback));
 }
 
@@ -1056,8 +1072,10 @@ void SetupDataStorage(
 	auto pathtext = Core::App().settings().downloadPathValue(
 	) | rpl::map([](const QString &text) {
 		if (text.isEmpty()) {
-			return tr::lng_download_path_default(tr::now);
-		} else if (text == qsl("tmp")) {
+			return Core::App().canReadDefaultDownloadPath(true)
+				? tr::lng_download_path_default(tr::now)
+				: tr::lng_download_path_temp(tr::now);
+		} else if (text == FileDialog::Tmp()) {
 			return tr::lng_download_path_temp(tr::now);
 		}
 		return QDir::toNativeSeparators(text);
@@ -1631,7 +1649,7 @@ void SetupSupport(
 		not_null<Ui::VerticalLayout*> container) {
 	AddSkip(container);
 
-	AddSubsectionTitle(container, rpl::single(qsl("Support settings")));
+	AddSubsectionTitle(container, rpl::single(u"Support settings"_q));
 
 	AddSkip(container, st::settingsSendTypeSkip);
 
@@ -1678,7 +1696,7 @@ void SetupSupport(
 
 	AddSkip(inner, st::settingsCheckboxesSkip);
 
-	AddSubsectionTitle(inner, rpl::single(qsl("Load chats for a period")));
+	AddSubsectionTitle(inner, rpl::single(u"Load chats for a period"_q));
 
 	SetupSupportChatsLimitSlice(controller, inner);
 

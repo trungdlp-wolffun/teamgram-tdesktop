@@ -23,59 +23,108 @@ namespace {
 std::map<int, const char*> BetaLogs() {
 	return {
 	{
-		4000003,
-		"- Animated emoji for messages.\n"
+		4005004,
+		"- Allow wide range of interface scale options.\n"
 
-		"- Premium: Privacy settings for voice messages.\n"
+		"- Show opened chat name in the window title.\n"
 
-		"- Premium: Gifting Telegram Premium "
-		"to any user from their profile page.\n"
+		"- Bug fixes and other minor improvements.\n"
+
+		"- Fix updating on macOS older than 10.14.\n"
 	},
 	{
-		4000004,
-		"- Allow sending animated emoji to Saved Messages "
-		"even without Telegram Premium.\n"
+		4005006,
+		"- Try enabling non-fractional scale "
+		"High DPI support on Windows and Linux.\n"
 
-		"- Premium: Suggest animated emoji by regular emoji "
-		"(can be disabled in Settings).\n"
+		"- Experimental setting for fractional scale "
+		"High DPI support on Windows and Linux.\n"
 
-		"- Premium: Show all suggested premium stickers "
-		"in a special section of the stickers panel.\n"
+		"- Fix navigation to bottom problems in groups you didn't join.\n"
 
-		"- Premium: Allow hiding premium stickers special section "
-		"of the stickers panel.\n"
+		"- Fix a crash in chat export settings changes.\n"
 
-		"- Fix a memory leak in RTMP livestreams.\n"
+		"- Fix a crash in sending some of JPEG images.\n"
 
-		"- Fix some bot webview bugs on macOS.\n"
-
-		"- Fix forwarding of voice messages.\n"
+		"- Fix CJK fonts on Windows.\n"
 	},
 	{
-		4001002,
-		"- New reaction selector above the right click menu.\n"
-
-		"- Premium: Set any custom emoji reactions in private chats.\n"
-
-		"- Premium: Set any custom emoji as your profile status.\n"
-
-		"- Insert or copy custom emoji from pack preview.\n"
+		4005007,
+		"- Fix glitches after moving window to another screen.\n",
 	},
 	{
-		4002001,
-		"- Improve scaling / cropping for photos / video files.\n"
+		4005008,
+		"- Allow opening another account in a new window "
+		"(see Settings > Advanced > Experimental Settings).\n"
 
-		"- Improve touch support in channel comments.\n"
-
-		"- Nice animation for spoilers.\n"
+		"- A lot of bugfixes for working with more than one window.\n"
 	},
 	{
-		4002002,
-		"- Fix crash in spoiler revealing in media captions.\n"
+		4006004,
+		"- Allow media viewer to exit fullscreen and become a normal window."
+	},
+	{
+		4006006,
+		"- Confirmation window before starting a call.\n"
 
-		"- Fix spoiler revealing in media viewer captions.\n"
+		"- New \"Battery and Animations\" settings section.\n"
+
+		"- \"Save Power on Low Battery\" option for laptops.\n"
+
+		"- Improved windowed mode support for media viewer.\n"
+
+		"- Hardware accelerated video playback fix on macOS.\n"
+
+		"- New application icon on macOS following the system guidelines.\n"
+	},
+	{
+		4006007,
+		"- Fix crash when accepting incoming calls.\n"
+
+		"- Remove sound when cancelling an unconfirmed call.\n"
+	},
+	{
+		4006008,
+		"- Improve quality of voice messages with changed playback speed.\n"
+
+		"- Show when your message was read in small groups.\n"
+
+		"- Fix pasting images from Firefox on Windows.\n"
+
+		"- Improve memory usage for custom emoji.\n"
+	},
+	{
+		4006010,
+		"- Suggest sending an invite link if user forbids "
+		"inviting him to groups.\n"
+
+		"- Show when a reaction was left on your message in small groups.\n"
+
+		"- Fix a crash in video chats on Windows.\n"
+
+		"- Fix a crash in audio speed change.\n"
+	},
+	{
+		4006011,
+		"- Allow larger interface scale values on high-dpi screens.\n"
+
+		"- Implement new voice and video speed change interface (up to 2.5x).\n"
+
+		"- Support global Fn+F shortcut to toggle fullscreen on macOS.\n"
+
+		"- Silent notification sound in Focus Mode on macOS.\n"
+
+		"- Fix media viewer on macOS with several screens.\n"
 		
-		"- Fix crash in folder editing on Linux.\n"
+		"- Fix a crash in connection type box.\n"
+
+		"- Fix possible crash on quit.\n"
+	},
+	{
+		4006012,
+		"- Fix several possible crashes.\n"
+
+		"- Deprecate macOS 10.12, Ubuntu 18.04 and CentOS 7 in July.\n"
 	}
 	};
 };
@@ -180,7 +229,7 @@ void Changelogs::addBetaLog(int changeVersion, const char *changes) {
 		return result.replace(simple, separator);
 	}();
 	const auto version = FormatVersionDisplay(changeVersion);
-	const auto log = qsl("New in version %1 beta:\n\n").arg(version) + text;
+	const auto log = u"New in version %1 beta:\n\n"_q.arg(version) + text;
 	addLocalLog(log);
 }
 

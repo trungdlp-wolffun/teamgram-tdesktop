@@ -23,6 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/zlib_help.h"
 #include "base/unixtime.h"
 #include "base/crc32hash.h"
+#include "base/never_freed_pointer.h"
 #include "data/data_session.h"
 #include "data/data_document_resolver.h"
 #include "main/main_account.h" // Account::local.
@@ -58,7 +59,7 @@ struct Applying {
 	Fn<void()> overrideKeep;
 };
 
-NeverFreedPointer<ChatBackground> GlobalBackground;
+base::NeverFreedPointer<ChatBackground> GlobalBackground;
 Applying GlobalApplying;
 
 inline bool AreTestingTheme() {
@@ -482,7 +483,7 @@ SendMediaReady PrepareWallPaper(MTP::DcId dcId, const QImage &image) {
 	};
 	push("s", scaled(320));
 
-	const auto filename = qsl("wallpaper.jpg");
+	const auto filename = u"wallpaper.jpg"_q;
 	auto attributes = QVector<MTPDocumentAttribute>(
 		1,
 		MTP_documentAttributeFilename(MTP_string(filename)));
@@ -702,7 +703,7 @@ void ChatBackground::set(const Data::WallPaper &paper, QImage image) {
 		setPreparedAfterPaper(std::move(image));
 	} else {
 		if (Data::IsLegacy1DefaultWallPaper(_paper)) {
-			image.load(qsl(":/gui/art/bg_initial.jpg"));
+			image.load(u":/gui/art/bg_initial.jpg"_q);
 			const auto scale = cScale() * cIntRetinaFactor();
 			if (scale != 100) {
 				image = image.scaledToWidth(
@@ -923,11 +924,21 @@ QImage ChatBackground::createCurrentImage() const {
 }
 
 bool ChatBackground::tile() const {
+	if (!started()) {
+		const auto &set = nightMode()
+			? _localStoredTileNightValue
+			: _localStoredTileDayValue;
+		if (set.has_value()) {
+			return *set;
+		}
+	}
 	return nightMode() ? _tileNightValue : _tileDayValue;
 }
 
 bool ChatBackground::tileDay() const {
-	if (Data::details::IsTestingThemeWallPaper(_paper) ||
+	if (!started() && _localStoredTileDayValue.has_value()) {
+		return *_localStoredTileDayValue;
+	} else if (Data::details::IsTestingThemeWallPaper(_paper) ||
 		Data::details::IsTestingDefaultWallPaper(_paper)) {
 		if (!nightMode()) {
 			return _tileForRevert;
@@ -937,7 +948,9 @@ bool ChatBackground::tileDay() const {
 }
 
 bool ChatBackground::tileNight() const {
-	if (Data::details::IsTestingThemeWallPaper(_paper) ||
+	if (!started() && _localStoredTileNightValue.has_value()) {
+		return *_localStoredTileNightValue;
+	} else if (Data::details::IsTestingThemeWallPaper(_paper) ||
 		Data::details::IsTestingDefaultWallPaper(_paper)) {
 		if (nightMode()) {
 			return _tileForRevert;
@@ -1259,7 +1272,7 @@ ChatBackground *Background() {
 }
 
 bool IsEmbeddedTheme(const QString &path) {
-	return path.isEmpty() || path.startsWith(qstr(":/gui/"));
+	return path.isEmpty() || path.startsWith(u":/gui/"_q);
 }
 
 bool Initialize(Saved &&saved) {

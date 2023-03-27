@@ -20,6 +20,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_dice_pack.h"
 #include "chat_helpers/stickers_gift_box_pack.h"
+#include "history/history.h"
+#include "history/history_item.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "storage/file_download.h"
 #include "storage/download_manager_mtproto.h"
@@ -59,8 +61,8 @@ constexpr auto kTmpPasswordReserveTime = TimeId(10);
 	// Like 'https://telegram.me/' or 'https://teamgram.me/'.
 	const auto &domain = session->serverConfig().internalLinksDomain;
 	const auto prefixes = {
-		qstr("https://"),
-		qstr("http://"),
+		u"https://"_q,
+		u"http://"_q,
 	};
 	for (const auto &prefix : prefixes) {
 		if (domain.startsWith(prefix, Qt::CaseInsensitive)) {
@@ -110,8 +112,9 @@ Session::Session(
 		_user,
 		Data::PeerUpdate::Flag::Photo
 	) | rpl::start_with_next([=] {
-		[[maybe_unused]] const auto image = _user->currentUserpic(
-			_selfUserpicView);
+		auto view = Ui::PeerUserpicView{ .cloud = _selfUserpicView };
+		[[maybe_unused]] const auto image = _user->userpicCloudImage(view);
+		_selfUserpicView = view.cloud;
 	}, lifetime());
 
 	crl::on_main(this, [=] {
@@ -197,7 +200,6 @@ QByteArray Session::validTmpPassword() const {
 
 // Can be called only right before ~Session.
 void Session::finishLogout() {
-	updates().updateOnline();
 	unlockTerms();
 	data().clear();
 	data().clearLocalStorage();
@@ -363,8 +365,8 @@ TextWithEntities Session::createInternalLink(
 		const TextWithEntities &query) const {
 	const auto result = createInternalLinkFull(query);
 	const auto prefixes = {
-		qstr("https://"),
-		qstr("http://"),
+		u"https://"_q,
+		u"http://"_q,
 	};
 	for (auto &prefix : prefixes) {
 		if (result.text.startsWith(prefix, Qt::CaseInsensitive)) {
@@ -401,7 +403,7 @@ void Session::addWindow(not_null<Window::SessionController*> controller) {
 		_windows.remove(controller);
 	});
 	updates().addActiveChat(controller->activeChatChanges(
-	) | rpl::map([=](const Dialogs::Key &chat) {
+	) | rpl::map([=](Dialogs::Key chat) {
 		return chat.peer();
 	}) | rpl::distinct_until_changed());
 }
@@ -411,12 +413,12 @@ bool Session::uploadsInProgress() const {
 }
 
 void Session::uploadsStopWithConfirmation(Fn<void()> done) {
-	const auto window = Core::App().primaryWindow();
-	if (!window) {
-		return;
-	}
 	const auto id = _uploader->currentUploadId();
-	const auto exists = !!data().message(id);
+	const auto message = data().message(id);
+	const auto exists = (message != nullptr);
+	const auto window = message
+		? Core::App().windowFor(message->history()->peer)
+		: Core::App().activePrimaryWindow();
 	auto box = Box([=](not_null<Ui::GenericBox*> box) {
 		box->addRow(
 			object_ptr<Ui::FlatLabel>(
@@ -440,7 +442,7 @@ void Session::uploadsStopWithConfirmation(Fn<void()> done) {
 
 				if (const auto item = data().message(id)) {
 					if (const auto window = tryResolveWindow()) {
-						window->showPeerHistoryAtItem(item);
+						window->showMessage(item);
 					}
 				}
 			});
@@ -464,6 +466,11 @@ Window::SessionController *Session::tryResolveWindow() const {
 		domain().activate(_account);
 		if (_windows.empty()) {
 			return nullptr;
+		}
+	}
+	for (const auto &window : _windows) {
+		if (window->isPrimary()) {
+			return window;
 		}
 	}
 	return _windows.front();

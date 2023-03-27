@@ -188,7 +188,7 @@ QString systemShortcutPath() {
 void cleanupShortcut() {
 	static const int maxFileLen = MAX_PATH * 10;
 
-	QString path = systemShortcutPath() + qsl("Teamgram.lnk");
+	QString path = systemShortcutPath() + u"Teamgram.lnk"_q;
 	std::wstring p = QDir::toNativeSeparators(path).toStdWString();
 
 	DWORD attributes = GetFileAttributes(p.c_str());

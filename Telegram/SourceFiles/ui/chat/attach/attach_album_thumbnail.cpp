@@ -7,12 +7,15 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/chat/attach/attach_album_thumbnail.h"
 
+#include "core/mime_type.h" // Core::IsMimeSticker.
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/image/image_prepare.h"
 #include "ui/text/format_values.h"
 #include "ui/widgets/buttons.h"
+#include "ui/effects/spoiler_mess.h"
 #include "ui/ui_utility.h"
 #include "ui/painter.h"
+#include "ui/power_saving.h"
 #include "base/call_delayed.h"
 #include "styles/style_chat.h"
 #include "styles/style_boxes.h"
@@ -25,13 +28,16 @@ AlbumThumbnail::AlbumThumbnail(
 	const PreparedFile &file,
 	const GroupMediaLayout &layout,
 	QWidget *parent,
+	Fn<void()> repaint,
 	Fn<void()> editCallback,
 	Fn<void()> deleteCallback)
 : _layout(layout)
 , _fullPreview(file.preview)
-, _shrinkSize(int(std::ceil(st::historyMessageRadius / 1.4)))
+, _shrinkSize(int(std::ceil(st::roundRadiusLarge / 1.4)))
 , _isPhoto(file.type == PreparedFile::Type::Photo)
-, _isVideo(file.type == PreparedFile::Type::Video) {
+, _isVideo(file.type == PreparedFile::Type::Video)
+, _isCompressedSticker(Core::IsMimeSticker(file.information->filemime))
+, _repaint(std::move(repaint)) {
 	Expects(!_fullPreview.isNull());
 
 	moveToLayout(layout);
@@ -68,7 +74,7 @@ AlbumThumbnail::AlbumThumbnail(
 
 	const auto availableFileWidth = st::sendMediaPreviewSize
 		- st.thumbSize
-		- st.padding.right()
+		- st.thumbSkip
 		// Right buttons.
 		- st::sendBoxAlbumGroupButtonFile.width * 2
 		- st::sendBoxAlbumGroupEditInternalSkip * 2
@@ -76,8 +82,7 @@ AlbumThumbnail::AlbumThumbnail(
 	const auto filepath = file.path;
 	if (filepath.isEmpty()) {
 		_name = "image.png";
-		_status = FormatImageSizeText(_fullPreview.size()
-			/ _fullPreview.devicePixelRatio());
+		_status = FormatImageSizeText(file.originalDimensions);
 	} else {
 		auto fileinfo = QFileInfo(filepath);
 		_name = fileinfo.fileName();
@@ -105,21 +110,30 @@ AlbumThumbnail::AlbumThumbnail(
 	_editMedia->setIconOverride(&st::sendBoxAlbumGroupEditButtonIconFile);
 	_deleteMedia->setIconOverride(&st::sendBoxAlbumGroupDeleteButtonIconFile);
 
-	updateFileRow(-1);
+	setSpoiler(file.spoiler);
+	setButtonVisible(false);
 }
 
-void AlbumThumbnail::updateFileRow(int row) {
-	if (row < 0) {
-		_editMedia->hide();
-		_deleteMedia->hide();
-		return;
-	}
-	_editMedia->show();
-	_deleteMedia->show();
+void AlbumThumbnail::setSpoiler(bool spoiler) {
+	Expects(_repaint != nullptr);
 
-	const auto fileHeight = st::attachPreviewThumbLayout.thumbSize
-		+ st::sendMediaRowSkip;
-	const auto top = row * fileHeight + st::sendBoxFileGroupSkipTop;
+	_spoiler = spoiler
+		? std::make_unique<SpoilerAnimation>(_repaint)
+		: nullptr;
+	_repaint();
+}
+
+bool AlbumThumbnail::hasSpoiler() const {
+	return _spoiler != nullptr;
+}
+
+void AlbumThumbnail::setButtonVisible(bool value) {
+	_editMedia->setVisible(value);
+	_deleteMedia->setVisible(value);
+}
+
+void AlbumThumbnail::moveButtons(int thumbTop) {
+	const auto top = thumbTop + st::sendBoxFileGroupSkipTop;
 
 	auto right = st::sendBoxFileGroupSkipRight + st::boxPhotoPadding.right();
 	_deleteMedia->moveToRight(right, top);
@@ -138,7 +152,7 @@ void AlbumThumbnail::animateLayoutToInitial() {
 }
 
 void AlbumThumbnail::moveToLayout(const GroupMediaLayout &layout) {
-	using Option = Images::Option;
+	using namespace Images;
 
 	animateLayoutToInitial();
 	_layout = layout;
@@ -146,31 +160,34 @@ void AlbumThumbnail::moveToLayout(const GroupMediaLayout &layout) {
 	const auto width = _layout.geometry.width();
 	const auto height = _layout.geometry.height();
 	_albumCorners = GetCornersFromSides(_layout.sides);
-	const auto corner = [&](RectPart part, Option skip) {
-		return !(_albumCorners & part) ? skip : Option();
-	};
-	const auto options = Option::RoundLarge
-		| corner(RectPart::TopLeft, Option::RoundSkipTopLeft)
-		| corner(RectPart::TopRight, Option::RoundSkipTopRight)
-		| corner(RectPart::BottomLeft, Option::RoundSkipBottomLeft)
-		| corner(RectPart::BottomRight, Option::RoundSkipBottomRight);
 	const auto pixSize = GetImageScaleSizeForGeometry(
 		{ _fullPreview.width(), _fullPreview.height() },
 		{ width, height });
 	const auto pixWidth = pixSize.width() * style::DevicePixelRatio();
 	const auto pixHeight = pixSize.height() * style::DevicePixelRatio();
 
-	_albumImage = PixmapFromImage(Images::Prepare(
+	_albumImage = PixmapFromImage(Prepare(
 		_fullPreview,
 		QSize(pixWidth, pixHeight),
 		{
-			.options = options,
+			.options = RoundOptions(ImageRoundRadius::Large, _albumCorners),
 			.outer = { width, height },
 		}));
+	_albumImageBlurred = QPixmap();
 }
 
 int AlbumThumbnail::photoHeight() const {
 	return _photo.height() / style::DevicePixelRatio();
+}
+
+int AlbumThumbnail::fileHeight() const {
+	return _isCompressedSticker
+		? photoHeight()
+		: st::attachPreviewThumbLayout.thumbSize;
+}
+
+bool AlbumThumbnail::isCompressedSticker() const {
+	return _isCompressedSticker;
 }
 
 void AlbumThumbnail::paintInAlbum(
@@ -181,46 +198,84 @@ void AlbumThumbnail::paintInAlbum(
 		float64 moveProgress) {
 	const auto shrink = anim::interpolate(0, _shrinkSize, shrinkProgress);
 	_lastShrinkValue = shrink;
-	const auto geometry = countCurrentGeometry(moveProgress);
-	const auto x = left + geometry.x();
-	const auto y = top + geometry.y();
-	if (shrink > 0 || moveProgress < 1.) {
-		const auto size = geometry.size();
-		if (shrinkProgress < 1 && _albumCorners != RectPart::None) {
-			prepareCache(size, shrink);
-			p.drawImage(x, y, _albumCache);
-		} else {
-			const auto to = QRect({ x, y }, size).marginsRemoved(
+	const auto geometry = countCurrentGeometry(
+		moveProgress
+	).translated(left, top);
+	auto paintedTo = geometry;
+	const auto revealed = _spoiler ? shrinkProgress : 1.;
+	if (revealed > 0.) {
+		if (shrink > 0 || moveProgress < 1.) {
+			const auto size = geometry.size();
+			paintedTo = geometry.marginsRemoved(
 				{ shrink, shrink, shrink, shrink }
 			);
-			drawSimpleFrame(p, to, size);
+			if (shrinkProgress < 1 && _albumCorners != RectPart::None) {
+				prepareCache(size, shrink);
+				p.drawImage(geometry.topLeft(), _albumCache);
+			} else {
+				drawSimpleFrame(p, paintedTo, size);
+			}
+		} else {
+			p.drawPixmap(geometry.topLeft(), _albumImage);
 		}
-	} else {
-		p.drawPixmap(x, y, _albumImage);
+		if (_isVideo) {
+			paintPlayVideo(p, geometry);
+		}
 	}
-	if (_isVideo) {
-		const auto innerSize = st::msgFileLayout.thumbSize;
-		const auto inner = QRect(
-			x + (geometry.width() - innerSize) / 2,
-			y + (geometry.height() - innerSize) / 2,
-			innerSize,
-			innerSize);
-		{
-			PainterHighQualityEnabler hq(p);
-			p.setPen(Qt::NoPen);
-			p.setBrush(st::msgDateImgBg);
-			p.drawEllipse(inner);
+	if (revealed < 1.) {
+		auto corners = Images::CornersMaskRef(
+			Images::CornersMask(ImageRoundRadius::Large));
+		if (!(_albumCorners & RectPart::TopLeft)) {
+			corners.p[0] = nullptr;
 		}
-		st::historyFileThumbPlay.paintInCenter(p, inner);
+		if (!(_albumCorners & RectPart::TopRight)) {
+			corners.p[1] = nullptr;
+		}
+		if (!(_albumCorners & RectPart::BottomLeft)) {
+			corners.p[2] = nullptr;
+		}
+		if (!(_albumCorners & RectPart::BottomRight)) {
+			corners.p[3] = nullptr;
+		}
+		p.setOpacity(1. - revealed);
+		if (_albumImageBlurred.isNull()) {
+			_albumImageBlurred = BlurredPreviewFromPixmap(
+				_albumImage,
+				_albumCorners);
+		}
+		p.drawPixmap(paintedTo, _albumImageBlurred);
+		const auto paused = On(PowerSaving::kChatSpoiler);
+		FillSpoilerRect(
+			p,
+			paintedTo,
+			corners,
+			DefaultImageSpoiler().frame(_spoiler->index(crl::now(), paused)),
+			_cornerCache);
+		p.setOpacity(1.);
 	}
 
 	_lastRectOfButtons = paintButtons(
 		p,
-		{ x, y },
+		geometry.topLeft(),
 		geometry.width(),
 		shrinkProgress);
+	_lastRectOfModify = geometry;
+}
 
-	_lastRectOfModify = QRect(QPoint(x, y), geometry.size());
+void AlbumThumbnail::paintPlayVideo(QPainter &p, QRect geometry) {
+	const auto innerSize = st::msgFileLayout.thumbSize;
+	const auto inner = QRect(
+		geometry.x() + (geometry.width() - innerSize) / 2,
+		geometry.y() + (geometry.height() - innerSize) / 2,
+		innerSize,
+		innerSize);
+	{
+		PainterHighQualityEnabler hq(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::msgDateImgBg);
+		p.drawEllipse(inner);
+	}
+	st::historyFileThumbPlay.paintInCenter(p, inner);
 }
 
 void AlbumThumbnail::prepareCache(QSize size, int shrink) {
@@ -369,11 +424,34 @@ void AlbumThumbnail::drawSimpleFrame(QPainter &p, QRect to, QSize size) const {
 
 void AlbumThumbnail::paintPhoto(Painter &p, int left, int top, int outerWidth) {
 	const auto size = _photo.size() / style::DevicePixelRatio();
+	if (_spoiler && _photoBlurred.isNull()) {
+		_photoBlurred = BlurredPreviewFromPixmap(
+			_photo,
+			RectPart::AllCorners);
+	}
+	const auto &pixmap = _spoiler ? _photoBlurred : _photo;
+	const auto rect = QRect(
+		left + (st::sendMediaPreviewSize - size.width()) / 2,
+		top,
+		pixmap.width() / pixmap.devicePixelRatio(),
+		pixmap.height() / pixmap.devicePixelRatio());
 	p.drawPixmapLeft(
 		left + (st::sendMediaPreviewSize - size.width()) / 2,
 		top,
 		outerWidth,
-		_photo);
+		pixmap);
+	if (_spoiler) {
+		const auto paused = On(PowerSaving::kChatSpoiler);
+		FillSpoilerRect(
+			p,
+			rect,
+			Images::CornersMaskRef(
+				Images::CornersMask(ImageRoundRadius::Large)),
+			DefaultImageSpoiler().frame(_spoiler->index(crl::now(), paused)),
+			_cornerCache);
+	} else if (_isVideo) {
+		paintPlayVideo(p, rect);
+	}
 
 	const auto topLeft = QPoint{ left, top };
 
@@ -391,8 +469,15 @@ void AlbumThumbnail::paintFile(
 		int left,
 		int top,
 		int outerWidth) {
+
+	if (isCompressedSticker()) {
+		auto spoiler = base::take(_spoiler);
+		paintPhoto(p, left, top, outerWidth);
+		_spoiler = base::take(spoiler);
+		return;
+	}
 	const auto &st = st::attachPreviewThumbLayout;
-	const auto textLeft = left + st.thumbSize + st.padding.right();
+	const auto textLeft = left + st.thumbSize + st.thumbSkip;
 
 	p.drawPixmap(left, top, _fileThumb);
 	p.setFont(st::semiboldFont);
@@ -422,7 +507,7 @@ bool AlbumThumbnail::containsPoint(QPoint position) const {
 }
 
 bool AlbumThumbnail::buttonsContainPoint(QPoint position) const {
-	return (_isPhoto
+	return ((_isPhoto && !_isCompressedSticker)
 		? _lastRectOfModify
 		: _lastRectOfButtons).contains(position);
 }
@@ -431,7 +516,7 @@ AttachButtonType AlbumThumbnail::buttonTypeFromPoint(QPoint position) const {
 	if (!buttonsContainPoint(position)) {
 		return AttachButtonType::None;
 	}
-	return !_lastRectOfButtons.contains(position)
+	return (!_lastRectOfButtons.contains(position) && !_isCompressedSticker)
 		? AttachButtonType::Modify
 		: (position.x() < _lastRectOfButtons.center().x())
 		? AttachButtonType::Edit

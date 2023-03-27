@@ -44,8 +44,8 @@ using PeersMap = details::PeersMap;
 using MediaData = details::MediaData;
 
 bool IsGlobalLink(const QString &link) {
-	return link.startsWith(qstr("http://"), Qt::CaseInsensitive)
-		|| link.startsWith(qstr("https://"), Qt::CaseInsensitive);
+	return link.startsWith(u"http://"_q, Qt::CaseInsensitive)
+		|| link.startsWith(u"https://"_q, Qt::CaseInsensitive);
 }
 
 QByteArray NoFileDescription(Data::File::SkipReason reason) {
@@ -1030,8 +1030,14 @@ auto HtmlWriter::Wrap::pushMessage(
 	}, [&](const ActionCustomAction &data) {
 		return data.message;
 	}, [&](const ActionBotAllowed &data) {
-		return "You allowed this bot to message you when you logged in on "
-			+ SerializeString(data.domain);
+		return data.attachMenu
+			? "You allowed this bot to message you "
+			"when you added it in the attachment menu."_q
+			: data.app.isEmpty()
+			? ("You allowed this bot to message you when you opened "
+				+ SerializeString(data.app))
+			: ("You allowed this bot to message you when you logged in on "
+				+ SerializeString(data.domain));
 	}, [&](const ActionSecureValuesSent &data) {
 		auto list = std::vector<QByteArray>();
 		for (const auto type : data.types) {
@@ -1137,19 +1143,44 @@ auto HtmlWriter::Wrap::pushMessage(
 			+ "&raquo; button to the bot";
 	}, [&](const ActionGiftPremium &data) {
 		if (!data.months || data.cost.isEmpty()) {
-			return (serviceFrom + " sent you a gift.");
+			return serviceFrom + " sent you a gift.";
 		}
-		return (serviceFrom
+		return serviceFrom
 			+ " sent you a gift for "
 			+ data.cost
 			+ ": Telegram Premium for "
-			+ QString::number(data.months).toUtf8() + " months.");
+			+ QString::number(data.months).toUtf8()
+			+ " months.";
+	}, [&](const ActionTopicCreate &data) {
+		return serviceFrom
+			+ " created topic &laquo;"
+			+ SerializeString(data.title)
+			+ "&raquo;";
+	}, [&](const ActionTopicEdit &data) {
+		auto parts = QList<QByteArray>();
+		if (!data.title.isEmpty()) {
+			parts.push_back("title to &laquo;"
+				+ SerializeString(data.title)
+				+ "&raquo;");
+		}
+		if (data.iconEmojiId) {
+			parts.push_back("icon to &laquo;"
+				+ QString::number(*data.iconEmojiId).toUtf8()
+				+ "&raquo;");
+		}
+		return serviceFrom + " changed topic " + parts.join(',');
+	}, [&](const ActionSuggestProfilePhoto &data) {
+		return serviceFrom + " suggests to use this photo";
+	}, [&](const ActionRequestedPeer &data) {
+		return "requested: "_q/* + data.peerId*/;
 	}, [](v::null_t) { return QByteArray(); });
 
 	if (!serviceText.isEmpty()) {
 		const auto &content = message.action.content;
 		const auto photo = v::is<ActionChatEditPhoto>(content)
 			? &v::get<ActionChatEditPhoto>(content).photo
+			: v::is<ActionSuggestProfilePhoto>(content)
+			? &v::get<ActionSuggestProfilePhoto>(content).photo
 			: nullptr;
 		return { info, pushServiceMessage(
 			message.id,

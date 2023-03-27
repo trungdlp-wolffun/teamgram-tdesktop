@@ -10,6 +10,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "data/data_session.h"
 #include "data/data_document.h"
+#include "ui/chat/attach/attach_prepare.h"
 #include "ui/image/image_location_factory.h"
 #include "storage/localimageloader.h"
 #include "base/unixtime.h"
@@ -127,8 +128,9 @@ void DicePack::generateLocal(int index, const QString &name) {
 		QByteArray(),
 		nullptr,
 		SendMediaType::File,
-		FileLoadTo(0, {}, 0, 0),
-		{});
+		FileLoadTo(0, {}, 0, 0, 0),
+		{},
+		false);
 	task.process({ .generateGoodThumbnail = false });
 	const auto result = task.peekResult();
 	Assert(result != nullptr);

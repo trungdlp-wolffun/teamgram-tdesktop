@@ -20,6 +20,7 @@ class SessionController;
 
 namespace Ui {
 struct MessageSendingAnimationFrom;
+class EmojiFlyAnimation;
 class RpWidget;
 } // namespace Ui
 
@@ -39,6 +40,8 @@ public:
 	EmojiStatusPanel();
 	~EmojiStatusPanel();
 
+	void setChooseFilter(Fn<bool(DocumentId)> filter);
+
 	void show(
 		not_null<Window::SessionController*> controller,
 		not_null<QWidget*> button,
@@ -47,9 +50,10 @@ public:
 	bool paintBadgeFrame(not_null<Ui::RpWidget*> widget);
 
 private:
-	class Animation;
-
 	void create(not_null<Window::SessionController*> controller);
+	[[nodiscard]] bool filter(
+		not_null<Window::SessionController*> controller,
+		DocumentId chosenId) const;
 
 	void startAnimation(
 		not_null<Data::Session*> owner,
@@ -58,8 +62,9 @@ private:
 		Ui::MessageSendingAnimationFrom from);
 
 	base::unique_qptr<ChatHelpers::TabbedPanel> _panel;
+	Fn<bool(DocumentId)> _chooseFilter;
 	QPointer<QWidget> _panelButton;
-	std::unique_ptr<Animation> _animation;
+	std::unique_ptr<Ui::EmojiFlyAnimation> _animation;
 	Data::CustomEmojiSizeTag _animationSizeTag = {};
 
 };

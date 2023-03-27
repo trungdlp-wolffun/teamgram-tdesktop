@@ -36,7 +36,7 @@ struct Set : public Blob {
 };
 
 inline auto PreviewPath(int i) {
-	return qsl(":/gui/emoji/set%1_preview.webp").arg(i);
+	return u":/gui/emoji/set%1_preview.webp"_q.arg(i);
 }
 
 const auto kSets = {
@@ -153,9 +153,8 @@ QString StateDescription(const SetState &state) {
 }
 
 bool GoodSetPartName(const QString &name) {
-	return (name == qstr("config.json"))
-		|| (name.startsWith(qstr("emoji_"))
-			&& name.endsWith(qstr(".webp")));
+	return (name == u"config.json"_q)
+		|| (name.startsWith(u"emoji_"_q) && name.endsWith(u".webp"_q));
 }
 
 bool UnpackSet(const QString &path, const QString &folder) {
@@ -263,7 +262,7 @@ void Row::paintRadio(QPainter &p) {
 	}
 	const auto loading = _loading
 		? _loading->computeState()
-		: Ui::RadialState{ 0., 0, FullArcLength };
+		: Ui::RadialState{ 0., 0, arc::kFullLength };
 	const auto isToggledSet = v::is<Active>(_state.current());
 	const auto isActiveSet = isToggledSet || v::is<Loading>(_state.current());
 	const auto toggled = _toggled.value(isToggledSet ? 1. : 0.);
@@ -302,7 +301,7 @@ void Row::paintRadio(QPainter &p) {
 			_st->thickness,
 			pen.color(),
 			_st->bg);
-	} else if (loading.arcLength < FullArcLength) {
+	} else if (loading.arcLength < arc::kFullLength) {
 		p.drawArc(rect, loading.arcFrom, loading.arcLength);
 	} else {
 		p.drawEllipse(rect);

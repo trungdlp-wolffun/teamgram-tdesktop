@@ -13,6 +13,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/labels.h"
 #include "ui/widgets/scroll_area.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/effects/loading_element.h"
 #include "ui/effects/round_checkbox.h"
 #include "ui/effects/ripple_animation.h"
 #include "ui/empty_userpic.h"
@@ -47,9 +48,28 @@ PaintRoundImageCallback PaintUserpicCallback(
 			};
 		}
 	}
-	auto userpic = std::shared_ptr<Data::CloudImageView>();
+	auto userpic = Ui::PeerUserpicView();
 	return [=](Painter &p, int x, int y, int outerWidth, int size) mutable {
 		peer->paintUserpicLeft(p, userpic, x, y, outerWidth, size);
+	};
+}
+
+PaintRoundImageCallback ForceRoundUserpicCallback(not_null<PeerData*> peer) {
+	auto userpic = Ui::PeerUserpicView();
+	auto cache = std::make_shared<QImage>();
+	return [=](Painter &p, int x, int y, int outerWidth, int size) mutable {
+		const auto ratio = style::DevicePixelRatio();
+		const auto cacheSize = QSize(size, size) * ratio;
+		if (cache->size() != cacheSize) {
+			*cache = QImage(cacheSize, QImage::Format_ARGB32_Premultiplied);
+			cache->setDevicePixelRatio(ratio);
+		}
+		auto q = Painter(cache.get());
+		peer->paintUserpicLeft(q, userpic, 0, 0, outerWidth, size);
+		q.end();
+
+		*cache = Images::Circle(std::move(*cache));
+		p.drawImage(x, y, *cache);
 	};
 }
 
@@ -331,12 +351,16 @@ void PeerListController::peerListSearchAddRow(not_null<PeerData*> peer) {
 	}
 }
 
-void PeerListController::peerListSearchRefreshRows() {
-	delegate()->peerListRefreshRows();
+void PeerListController::peerListSearchAddRow(PeerListRowId id) {
+	if (auto row = delegate()->peerListFindRow(id)) {
+		delegate()->peerListAppendFoundRow(row);
+	} else if (auto row = createSearchRow(id)) {
+		delegate()->peerListAppendSearchRow(std::move(row));
+	}
 }
 
-rpl::producer<int> PeerListController::onlineCountValue() const {
-	return rpl::single(0);
+void PeerListController::peerListSearchRefreshRows() {
+	delegate()->peerListRefreshRows();
 }
 
 void PeerListController::setDescriptionText(const QString &text) {
@@ -347,25 +371,26 @@ void PeerListController::setDescriptionText(const QString &text) {
 	}
 }
 
-void PeerListController::setSearchLoadingText(const QString &text) {
-	if (text.isEmpty()) {
-		setSearchLoading(nullptr);
-	} else {
-		setSearchLoading(object_ptr<Ui::FlatLabel>(nullptr, text, st::membersAbout));
-	}
-}
-
 void PeerListController::setSearchNoResultsText(const QString &text) {
 	if (text.isEmpty()) {
 		setSearchNoResults(nullptr);
 	} else {
-		setSearchNoResults(object_ptr<Ui::FlatLabel>(nullptr, text, st::membersAbout));
+		setSearchNoResults(
+			object_ptr<Ui::FlatLabel>(nullptr, text, st::membersAbout));
 	}
 }
 
 base::unique_qptr<Ui::PopupMenu> PeerListController::rowContextMenu(
 		QWidget *parent,
 		not_null<PeerListRow*> row) {
+	return nullptr;
+}
+
+std::unique_ptr<PeerListRow> PeerListController::createSearchRow(
+		PeerListRowId id) {
+	if (const auto peer = session().data().peerLoaded(PeerId(id))) {
+		return createSearchRow(peer);
+	}
 	return nullptr;
 }
 
@@ -402,7 +427,9 @@ void PeerListBox::addSelectItem(
 	addSelectItem(
 		peer->id.value,
 		text,
-		PaintUserpicCallback(peer, respect),
+		(peer->isForum()
+			? ForceRoundUserpicCallback(peer)
+			: PaintUserpicCallback(peer, respect)),
 		animated);
 }
 
@@ -412,7 +439,7 @@ void PeerListBox::addSelectItem(
 	addSelectItem(
 		row->id(),
 		row->generateShortName(),
-		row->generatePaintUserpicCallback(),
+		row->generatePaintUserpicCallback(true),
 		animated);
 }
 
@@ -625,18 +652,22 @@ QString PeerListRow::generateShortName() {
 		: peer()->shortName();
 }
 
-std::shared_ptr<Data::CloudImageView> &PeerListRow::ensureUserpicView() {
-	if (!_userpic) {
+Ui::PeerUserpicView &PeerListRow::ensureUserpicView() {
+	if (!_userpic.cloud && peer()->hasUserpic()) {
 		_userpic = peer()->createUserpicView();
 	}
 	return _userpic;
 }
 
-PaintRoundImageCallback PeerListRow::generatePaintUserpicCallback() {
+PaintRoundImageCallback PeerListRow::generatePaintUserpicCallback(
+		bool forceRound) {
 	const auto saved = _isSavedMessagesChat;
 	const auto replies = _isRepliesMessagesChat;
 	const auto peer = this->peer();
-	auto userpic = saved ? nullptr : ensureUserpicView();
+	auto userpic = saved ? Ui::PeerUserpicView() : ensureUserpicView();
+	if (forceRound && peer->isForum()) {
+		return ForceRoundUserpicCallback(peer);
+	}
 	return [=](Painter &p, int x, int y, int outerWidth, int size) mutable {
 		if (saved) {
 			Ui::EmptyUserpic::PaintSavedMessages(p, x, y, outerWidth, size);
@@ -647,6 +678,18 @@ PaintRoundImageCallback PeerListRow::generatePaintUserpicCallback() {
 		}
 	};
 }
+
+
+auto PeerListRow::generateNameFirstLetters() const
+-> const base::flat_set<QChar> & {
+	return peer()->nameFirstLetters();
+}
+
+auto PeerListRow::generateNameWords() const
+-> const base::flat_set<QString> & {
+	return peer()->nameWords();
+}
+
 
 void PeerListRow::invalidatePixmapsCache() {
 	if (_checkbox) {
@@ -673,7 +716,7 @@ int PeerListRow::paintNameIconGetWidth(
 			nameLeft,
 			nameTop,
 			availableWidth,
-			st::msgNameStyle.font->height),
+			st::semiboldFont->height),
 		nameWidth,
 		outerWidth,
 		{
@@ -688,7 +731,6 @@ int PeerListRow::paintNameIconGetWidth(
 			.premiumFg = &(selected
 				? st::dialogsVerifiedIconBgOver
 				: st::dialogsVerifiedIconBg),
-			.preview = st::windowBgOver->c,
 			.customEmojiRepaint = repaint,
 			.now = now,
 			.paused = false,
@@ -747,7 +789,7 @@ void PeerListRow::paintUserpic(
 		paintDisabledCheckUserpic(p, st, x, y, outerWidth);
 	} else if (_checkbox) {
 		_checkbox->paint(p, x, y, outerWidth);
-	} else if (const auto callback = generatePaintUserpicCallback()) {
+	} else if (const auto callback = generatePaintUserpicCallback(false)) {
 		callback(p, x, y, outerWidth, st.photoSize);
 	}
 }
@@ -818,10 +860,16 @@ void PeerListRow::lazyInitialize(const style::PeerListItem &st) {
 void PeerListRow::createCheckbox(
 		const style::RoundImageCheckbox &st,
 		Fn<void()> updateCallback) {
+	const auto generateRadius = [=](int size) {
+		return (!special() && peer()->isForum())
+			? int(size * Ui::ForumUserpicRadiusMultiplier())
+			: std::optional<int>();
+	};
 	_checkbox = std::make_unique<Ui::RoundImageCheckbox>(
 		st,
 		std::move(updateCallback),
-		generatePaintUserpicCallback());
+		generatePaintUserpicCallback(false),
+		generateRadius);
 }
 
 void PeerListRow::setCheckedInternal(bool checked, anim::type animated) {
@@ -983,12 +1031,12 @@ bool PeerListContent::addingToSearchIndex() const {
 }
 
 void PeerListContent::addToSearchIndex(not_null<PeerListRow*> row) {
-	if (row->isSearchResult() || row->special()) {
+	if (row->isSearchResult()) {
 		return;
 	}
 
 	removeFromSearchIndex(row);
-	row->setNameFirstLetters(row->peer()->nameFirstLetters());
+	row->setNameFirstLetters(row->generateNameFirstLetters());
 	for (auto ch : row->nameFirstLetters()) {
 		_searchIndex[ch].push_back(row);
 	}
@@ -1208,7 +1256,7 @@ int PeerListContent::labelHeight() const {
 		if (!_filterResults.empty()) {
 			return 0;
 		}
-		if (_controller->isSearchLoading()) {
+		if (_controller->isSearchLoading() && _searchLoading) {
 			return computeLabelHeight(_searchLoading);
 		}
 		return computeLabelHeight(_searchNoResults);
@@ -1244,11 +1292,20 @@ void PeerListContent::setSearchMode(PeerListSearchMode mode) {
 		}
 		_searchMode = mode;
 		if (_controller->hasComplexSearch()) {
-			if (!_searchLoading) {
-				setSearchLoading(object_ptr<Ui::FlatLabel>(
-					this,
-					tr::lng_contacts_loading(tr::now),
-					st::membersAbout));
+			if (_mode == Mode::Custom) {
+				if (!_searchLoading) {
+					setSearchLoading(object_ptr<Ui::FlatLabel>(
+						this,
+						tr::lng_contacts_loading(tr::now),
+						st::membersAbout));
+				}
+			} else {
+				if (!_loadingAnimation) {
+					_loadingAnimation = Ui::CreateLoadingPeerListItemWidget(
+						this,
+						_st.item,
+						2);
+				}
 			}
 		} else {
 			clearSearchRows();
@@ -1343,6 +1400,14 @@ int PeerListContent::resizeGetHeight(int newWidth) {
 		_searchLoading->moveToLeft(st::contactsPadding.left(), labelTop + st::membersAboutLimitPadding.top(), newWidth);
 		_searchLoading->setVisible(!hideAll && showingSearch() && _filterResults.empty() && _controller->isSearchLoading());
 	}
+	if (_loadingAnimation) {
+		_loadingAnimation->resizeToWidth(newWidth);
+		_loadingAnimation->moveToLeft(0, rowsTop(), newWidth);
+		_loadingAnimation->setVisible(!hideAll
+			&& showingSearch()
+			&& _filterResults.empty()
+			&& _controller->isSearchLoading());
+	}
 	const auto label = labelHeight();
 	const auto belowTop = (label > 0 || rowsCount > 0)
 		? (labelTop + label + _st.padding.bottom())
@@ -1410,7 +1475,7 @@ void PeerListContent::mousePressEvent(QMouseEvent *e) {
 				row->addRipple(_st.item, _controller->customRowRippleMaskGenerator(), point, std::move(updateCallback));
 			} else {
 				const auto maskGenerator = [&] {
-					return Ui::RippleAnimation::rectMask(
+					return Ui::RippleAnimation::RectMask(
 						QSize(width(), _rowHeight));
 				};
 				row->addRipple(_st.item, maskGenerator, point, std::move(updateCallback));
@@ -1813,9 +1878,9 @@ void PeerListContent::searchQueryChanged(QString query) {
 			}
 			if (minimalList) {
 				auto searchWordInNames = [](
-						not_null<PeerData*> peer,
+						not_null<PeerListRow*> row,
 						const QString &searchWord) {
-					for (auto &nameWord : peer->nameWords()) {
+					for (auto &nameWord : row->generateNameWords()) {
 						if (nameWord.startsWith(searchWord)) {
 							return true;
 						}
@@ -1823,9 +1888,9 @@ void PeerListContent::searchQueryChanged(QString query) {
 					return false;
 				};
 				auto allSearchWordsInNames = [&](
-						not_null<PeerData*> peer) {
+						not_null<PeerListRow*> row) {
 					for (const auto &searchWord : searchWordsList) {
-						if (!searchWordInNames(peer, searchWord)) {
+						if (!searchWordInNames(row, searchWord)) {
 							return false;
 						}
 					}
@@ -1834,7 +1899,7 @@ void PeerListContent::searchQueryChanged(QString query) {
 
 				_filterResults.reserve(minimalList->size());
 				for (const auto &row : *minimalList) {
-					if (!row->special() && allSearchWordsInNames(row->peer())) {
+					if (allSearchWordsInNames(row)) {
 						_filterResults.push_back(row);
 					}
 				}

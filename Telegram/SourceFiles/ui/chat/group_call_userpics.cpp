@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "ui/paint/blobs.h"
 #include "ui/painter.h"
+#include "ui/power_saving.h"
 #include "base/random.h"
 #include "styles/style_chat.h"
 
@@ -116,10 +117,10 @@ GroupCallUserpics::GroupCallUserpics(
 	});
 
 	rpl::combine(
-		rpl::single(anim::Disabled()) | rpl::then(anim::Disables()),
+		PowerSaving::OnValue(PowerSaving::kCalls),
 		std::move(hideBlobs)
-	) | rpl::start_with_next([=](bool animDisabled, bool deactivated) {
-		const auto hide = animDisabled || deactivated;
+	) | rpl::start_with_next([=](bool disabled, bool deactivated) {
+		const auto hide = disabled || deactivated;
 
 		if (!(hide && _speakingAnimationHideLastTime)) {
 			_speakingAnimationHideLastTime = hide ? crl::now() : 0;
@@ -262,7 +263,7 @@ void GroupCallUserpics::validateCache(Userpic &userpic) {
 	{
 		auto p = QPainter(&userpic.cache);
 		const auto skip = (kWideScale - 1) / 2 * size;
-		p.drawImage(skip, skip, userpic.data.userpic);
+		p.drawImage(QRect(skip, skip, size, size), userpic.data.userpic);
 
 		if (userpic.cacheMasked) {
 			auto hq = PainterHighQualityEnabler(p);

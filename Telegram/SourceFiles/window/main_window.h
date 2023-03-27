@@ -37,6 +37,7 @@ struct TermsLock;
 
 [[nodiscard]] const QImage &Logo();
 [[nodiscard]] const QImage &LogoNoMargin();
+void OverrideApplicationIcon(QImage image);
 [[nodiscard]] QIcon CreateIcon(
 	Main::Session *session = nullptr,
 	bool returnNullIfDefault = false);
@@ -77,14 +78,13 @@ public:
 	[[nodiscard]] QRect desktopRect() const;
 	[[nodiscard]] Core::WindowPosition withScreenInPosition(
 		Core::WindowPosition position) const;
-	[[nodiscard]] static Core::WindowPosition SecondaryInitPosition();
 
 	void init();
 
 	void updateIsActive();
 
 	[[nodiscard]] bool isActive() const {
-		return _isActive;
+		return !isHidden() && _isActive;
 	}
 	[[nodiscard]] virtual bool isActiveForTrayMenu() {
 		updateIsActive();
@@ -119,7 +119,8 @@ public:
 
 	rpl::producer<> leaveEvents() const;
 
-	virtual void updateWindowIcon();
+	virtual void updateWindowIcon() = 0;
+	void updateTitle();
 
 	void clearWidgets();
 
@@ -134,9 +135,10 @@ public:
 		updateGlobalMenuHook();
 	}
 
-	[[nodiscard]] virtual bool preventsQuit(Core::QuitReason reason) {
-		return false;
-	}
+	[[nodiscard]] QRect countInitialGeometry(
+		Core::WindowPosition position,
+		Core::WindowPosition initial,
+		QSize minSize) const;
 
 protected:
 	void leaveEventHook(QEvent *e) override;
@@ -146,6 +148,8 @@ protected:
 	void handleActiveChanged();
 	void handleVisibleChanged(bool visible);
 
+	virtual void checkActivation() {
+	}
 	virtual void initHook() {
 	}
 
@@ -178,11 +182,7 @@ protected:
 		return false;
 	}
 
-	// This one is overriden in Windows for historical reasons.
-	virtual int32 screenNameChecksum(const QString &name) const;
-
 	void setPositionInited();
-	void updateUnreadCounter();
 
 	virtual QRect computeDesktopRect() const;
 
@@ -191,7 +191,9 @@ private:
 	void updateMinimumSize();
 	void updatePalette();
 
-	[[nodiscard]] Core::WindowPosition positionFromSettings() const;
+	[[nodiscard]] Core::WindowPosition initialPosition() const;
+	[[nodiscard]] Core::WindowPosition nextInitialChildPosition(
+		bool primary);
 	[[nodiscard]] QRect countInitialGeometry(Core::WindowPosition position);
 	void initGeometry();
 
@@ -207,18 +209,29 @@ private:
 	object_ptr<Ui::RpWidget> _body;
 	object_ptr<TWidget> _rightColumn = { nullptr };
 
-	QIcon _icon;
-	bool _usingSupportIcon = false;
-
 	bool _isActive = false;
 
 	rpl::event_stream<> _leaveEvents;
 
 	bool _maximizedBeforeHide = false;
 
+	QPoint _lastMyChildCreatePosition;
+	int _lastChildIndex = 0;
+
 	mutable QRect _monitorRect;
 	mutable crl::time _monitorLastGot = 0;
 
 };
+
+[[nodiscard]] int32 DefaultScreenNameChecksum(const QString &name);
+
+[[nodiscard]] Core::WindowPosition PositionWithScreen(
+	Core::WindowPosition position,
+	const QScreen *chosen,
+	QSize minimal);
+[[nodiscard]] Core::WindowPosition PositionWithScreen(
+	Core::WindowPosition position,
+	not_null<const QWidget*> widget,
+	QSize minimal);
 
 } // namespace Window

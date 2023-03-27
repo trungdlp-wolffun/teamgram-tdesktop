@@ -29,8 +29,6 @@ bool gStartMinimized = false;
 bool gStartInTray = false;
 bool gAutoStart = false;
 bool gSendToMenu = false;
-bool gUseExternalVideoPlayer = false;
-bool gUseFreeType = false;
 bool gAutoUpdate = true;
 LaunchMode gLaunchMode = LaunchModeNormal;
 bool gSeenTrayTooltip = false;
@@ -46,9 +44,6 @@ uint32 gConnectionsInSession = 1;
 QByteArray gLocalSalt;
 int gScreenScale = style::kScaleAuto;
 int gConfigScale = style::kScaleAuto;
-
-QString gDateFormat = qsl("dd.MM.yy");
-QString gTimeFormat = qsl("hh:mm");
 
 RecentStickerPreload gRecentStickersPreload;
 RecentStickerPack gRecentStickers;

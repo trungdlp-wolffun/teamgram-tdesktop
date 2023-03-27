@@ -23,7 +23,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_account.h"
 #include "history/history.h"
 #include "history/history_item.h"
-#include "history/history_message.h"
+#include "history/history_item_helpers.h"
 #include "core/application.h"
 #include "core/mime_type.h"
 #include "ui/controls/download_bar.h"
@@ -508,9 +508,13 @@ HistoryItem *DownloadManager::lookupLoadingItem(
 void DownloadManager::loadingStopWithConfirmation(
 		Fn<void()> callback,
 		Main::Session *onlyInSession) {
-	const auto window = Core::App().primaryWindow();
 	const auto item = lookupLoadingItem(onlyInSession);
-	if (!window || !item) {
+	if (!item) {
+		return;
+	}
+	const auto window = Core::App().windowFor(
+		&item->history()->session().account());
+	if (!window) {
 		return;
 	}
 	const auto weak = base::make_weak(&item->history()->session());
@@ -540,7 +544,7 @@ void DownloadManager::loadingStopWithConfirmation(
 			if (const auto strong = weak.get()) {
 				if (const auto item = strong->data().message(id)) {
 					if (const auto window = strong->tryResolveWindow()) {
-						window->showPeerHistoryAtItem(item);
+						window->showMessage(item);
 					}
 				}
 			}
@@ -930,7 +934,7 @@ void DownloadManager::writePostponed(not_null<Main::Session*> session) {
 
 Fn<std::optional<QByteArray>()> DownloadManager::serializator(
 		not_null<Main::Session*> session) const {
-	return [this, weak = base::make_weak(session.get())]()
+	return [this, weak = base::make_weak(session)]()
 		-> std::optional<QByteArray> {
 		const auto strong = weak.get();
 		if (!strong) {

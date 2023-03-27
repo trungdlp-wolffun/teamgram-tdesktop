@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "chat_helpers/tabbed_selector.h"
 #include "data/stickers/data_stickers.h"
+#include "ui/round_rect.h"
 #include "base/variant.h"
 #include "base/timer.h"
 
@@ -28,6 +29,7 @@ class PopupMenu;
 class RippleAnimation;
 class BoxContent;
 class PathShiftGradient;
+class TabbedSearch;
 } // namespace Ui
 
 namespace Lottie {
@@ -57,13 +59,21 @@ enum class ValidateIconAnimations;
 class StickersListFooter;
 class LocalStickersManager;
 
+enum class StickersListMode {
+	Full,
+	Masks,
+	UserpicBuilder,
+};
+
 class StickersListWidget final : public TabbedSelector::Inner {
 public:
+	using Mode = StickersListMode;
+
 	StickersListWidget(
 		QWidget *parent,
 		not_null<Window::SessionController*> controller,
 		Window::GifPauseReason level,
-		bool masks = false);
+		Mode mode = Mode::Full);
 
 	rpl::producer<FileChosen> chosen() const;
 	rpl::producer<> scrollUpdated() const;
@@ -87,7 +97,7 @@ public:
 	uint64 currentSet(int yOffset) const;
 
 	void sendSearchRequest();
-	void searchForSets(const QString &query);
+	void searchForSets(const QString &query, std::vector<EmojiPtr> emoji);
 
 	std::shared_ptr<Lottie::FrameRenderer> getLottieRenderer();
 
@@ -195,6 +205,7 @@ private:
 		const QVector<DocumentData*> &pack,
 		bool skipPremium);
 
+	void setupSearch();
 	void preloadMoreOfficial();
 	QSize boundingBoxSize() const;
 
@@ -216,7 +227,6 @@ private:
 	bool stickerHasDeleteButton(const Set &set, int index) const;
 	std::vector<Sticker> collectRecentStickers();
 	void refreshRecentStickers(bool resize = true);
-	void refreshPremiumStickers();
 	void refreshFavedStickers();
 	enum class GroupStickersPlace {
 		Visible,
@@ -224,7 +234,6 @@ private:
 	};
 	void refreshMegagroupStickers(GroupStickersPlace place);
 	void refreshSettingsVisibility();
-	void appendPremiumCloudSet();
 
 	void updateSelected();
 	void setSelected(OverState newSelected);
@@ -318,6 +327,7 @@ private:
 	void searchResultsDone(const MTPmessages_FoundStickerSets &result);
 	void refreshSearchRows();
 	void refreshSearchRows(const std::vector<uint64> *cloudSets);
+	void fillFilteredStickersRow();
 	void fillLocalSearchRows(const QString &query);
 	void fillCloudSearchRows(const std::vector<uint64> &cloudSets);
 	void addSearchRow(not_null<Data::StickersSet*> set);
@@ -329,7 +339,10 @@ private:
 		int index,
 		not_null<DocumentData*> document);
 
+	const Mode _mode;
+
 	not_null<Window::SessionController*> _controller;
+	std::unique_ptr<Ui::TabbedSearch> _search;
 	MTP::Sender _api;
 	std::unique_ptr<LocalStickersManager> _localSetsManager;
 	ChannelData *_megagroupSet = nullptr;
@@ -337,12 +350,12 @@ private:
 	std::vector<Set> _mySets;
 	std::vector<Set> _officialSets;
 	std::vector<Set> _searchSets;
-	int _premiumsIndex = -1;
 	int _featuredSetsCount = 0;
 	std::vector<bool> _custom;
 	base::flat_set<not_null<DocumentData*>> _favedStickersMap;
 	std::weak_ptr<Lottie::FrameRenderer> _lottieRenderer;
 
+	bool _showingSetById = false;
 	crl::time _lastScrolledAt = 0;
 	crl::time _lastFullUpdatedAt = 0;
 
@@ -365,6 +378,9 @@ private:
 	OverState _pressed;
 	QPoint _lastMousePosition;
 
+	Ui::RoundRect _trendingAddBgOver, _trendingAddBg;
+	Ui::RoundRect _groupCategoryAddBgOver, _groupCategoryAddBg;
+
 	const std::unique_ptr<Ui::PathShiftGradient> _pathGradient;
 
 	Ui::Text::String _megagroupSetAbout;
@@ -383,6 +399,7 @@ private:
 
 	std::unique_ptr<StickerPremiumMark> _premiumMark;
 
+	std::vector<not_null<DocumentData*>> _filteredStickers;
 	std::map<QString, std::vector<uint64>> _searchCache;
 	std::vector<std::pair<uint64, QStringList>> _searchIndex;
 	base::Timer _searchRequestTimer;

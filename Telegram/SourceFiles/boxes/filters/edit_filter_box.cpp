@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
 #include "styles/style_window.h"
+#include "styles/style_chat.h"
 
 namespace {
 
@@ -83,7 +84,7 @@ private:
 	};
 	struct PeerButton {
 		not_null<History*> history;
-		std::shared_ptr<Data::CloudImageView> userpic;
+		Ui::PeerUserpicView userpic;
 		Ui::Text::String name;
 		Button button;
 	};

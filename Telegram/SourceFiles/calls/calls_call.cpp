@@ -220,7 +220,7 @@ Call::Call(
 	std::make_unique<Webrtc::VideoTrack>(
 		StartVideoState(video))) {
 	if (_type == Type::Outgoing) {
-		setState(State::Requesting);
+		setState(State::WaitingUserConfirmation);
 	} else {
 		const auto &config = _user->session().serverConfig();
 		_discardByTimeoutTimer.callOnce(config.callRingTimeoutMs);
@@ -342,6 +342,12 @@ void Call::startIncoming() {
 	}).fail([=](const MTP::Error &error) {
 		handleRequestError(error.type());
 	}).send();
+}
+
+void Call::applyUserConfirmation() {
+	if (_state.current() == State::WaitingUserConfirmation) {
+		setState(State::Requesting);
+	}
 }
 
 void Call::answer() {
@@ -500,8 +506,8 @@ void Call::startWaitingTrack() {
 	_waitingTrack = Media::Audio::Current().createTrack();
 	const auto trackFileName = Core::App().settings().getSoundPath(
 		(_type == Type::Outgoing)
-		? qsl("call_outgoing")
-		: qsl("call_incoming"));
+		? u"call_outgoing"_q
+		: u"call_incoming"_q);
 	_waitingTrack->samplePeakEach(kSoundSampleMs);
 	_waitingTrack->fillFromFile(trackFileName);
 	_waitingTrack->playInLoop();
@@ -893,8 +899,8 @@ void Call::createAndStartController(const MTPDphoneCall &call) {
 			settings.callAudioBackend()),
 	};
 	if (Logs::DebugEnabled()) {
-		const auto callLogFolder = cWorkingDir() + qsl("DebugLogs");
-		const auto callLogPath = callLogFolder + qsl("/last_call_log.txt");
+		const auto callLogFolder = cWorkingDir() + u"DebugLogs"_q;
+		const auto callLogPath = callLogFolder + u"/last_call_log.txt"_q;
 		const auto callLogNative = QDir::toNativeSeparators(callLogPath);
 #ifdef Q_OS_WIN
 		descriptor.config.logPath.data = callLogNative.toStdWString();
@@ -1033,14 +1039,15 @@ bool Call::checkCallFields(const MTPDphoneCallAccepted &call) {
 }
 
 void Call::setState(State state) {
-	if (_state.current() == State::Failed) {
+	const auto was = _state.current();
+	if (was == State::Failed) {
 		return;
 	}
-	if (_state.current() == State::FailedHangingUp
+	if (was == State::FailedHangingUp
 		&& state != State::Failed) {
 		return;
 	}
-	if (_state.current() != state) {
+	if (was != state) {
 		_state = state;
 
 		if (true
@@ -1068,7 +1075,9 @@ void Call::setState(State state) {
 			_delegate->callPlaySound(Delegate::CallSound::Connecting);
 			break;
 		case State::Ended:
-			_delegate->callPlaySound(Delegate::CallSound::Ended);
+			if (was != State::WaitingUserConfirmation) {
+				_delegate->callPlaySound(Delegate::CallSound::Ended);
+			}
 			[[fallthrough]];
 		case State::EndedByOtherDevice:
 			_delegate->callFinished(this);

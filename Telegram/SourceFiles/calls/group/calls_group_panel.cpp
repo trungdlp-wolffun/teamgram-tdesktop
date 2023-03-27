@@ -27,6 +27,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/tooltip.h"
 #include "ui/widgets/rp_window.h"
 #include "ui/chat/group_call_bar.h"
+#include "ui/controls/userpic_button.h"
 #include "ui/layers/layer_manager.h"
 #include "ui/layers/generic_box.h"
 #include "ui/text/text_utilities.h"
@@ -35,7 +36,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_prepare.h"
 #include "ui/painter.h"
 #include "ui/round_rect.h"
-#include "ui/special_buttons.h"
 #include "info/profile/info_profile_values.h" // Info::Profile::Value.
 #include "core/application.h"
 #include "core/core_settings.h"
@@ -221,8 +221,8 @@ void Panel::migrate(not_null<ChannelData*> channel) {
 void Panel::subscribeToPeerChanges() {
 	Info::Profile::NameValue(
 		_peer
-	) | rpl::start_with_next([=](const TextWithEntities &name) {
-		window()->setTitle(name.text);
+	) | rpl::start_with_next([=](const QString &name) {
+		window()->setTitle(name);
 	}, _peerLifetime);
 }
 
@@ -487,7 +487,7 @@ void Panel::initControls() {
 }
 
 void Panel::toggleFullScreen() {
-	if (_fullScreenOrMaximized.current()) {
+	if (_fullScreenOrMaximized.current() || window()->isFullScreen()) {
 		window()->showNormal();
 	} else {
 		window()->showFullScreen();
@@ -845,7 +845,7 @@ void Panel::setupMembers() {
 	_members->addMembersRequests(
 	) | rpl::start_with_next([=] {
 		if (!_peer->isBroadcast()
-			&& _peer->canWrite()
+			&& Data::CanSend(_peer, ChatRestriction::SendOther, false)
 			&& _call->joinAs()->isSelf()) {
 			addMembers();
 		} else if (const auto channel = _peer->asChannel()) {
@@ -1244,7 +1244,6 @@ void Panel::refreshTopButton() {
 			auto joinAsToggle = object_ptr<Ui::UserpicButton>(
 				widget(),
 				joinAs,
-				Ui::UserpicButton::Role::Custom,
 				st::groupCallJoinAsToggle);
 			_joinAsToggle.destroy();
 			_joinAsToggle = std::move(joinAsToggle);
@@ -2336,10 +2335,8 @@ void Panel::refreshTitle() {
 			) | rpl::map([=](not_null<Data::GroupCall*> real) {
 				return real->titleValue();
 			}) | rpl::flatten_latest())
-		) | rpl::map([=](
-				const TextWithEntities &name,
-				const QString &title) {
-			return title.isEmpty() ? name.text : title;
+		) | rpl::map([=](const QString &name, const QString &title) {
+			return title.isEmpty() ? name : title;
 		}) | rpl::after_next([=] {
 			refreshTitleGeometry();
 		});
@@ -2359,7 +2356,7 @@ void Panel::refreshTitle() {
 			auto countText = _call->real(
 			) | rpl::map([=](not_null<Data::GroupCall*> real) {
 				return tr::lng_group_call_rtmp_viewers(
-					lt_count,
+					lt_count_decimal,
 					real->fullCountValue(
 					) | rpl::map([=](int count) {
 						return std::max(float64(count), 1.);
@@ -2554,7 +2551,7 @@ not_null<Ui::RpWidget*> Panel::widget() const {
 }
 
 Show::Show(not_null<Panel*> panel)
-: _panel(base::make_weak(panel.get())) {
+: _panel(base::make_weak(panel)) {
 }
 
 Show::~Show() = default;

@@ -8,14 +8,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 
 #include "storage/localstorage.h"
+#include "storage/storage_user_photos.h"
 #include "main/main_session.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
 #include "data/data_peer_bot_command.h"
+#include "data/data_photo.h"
 #include "data/data_emoji_statuses.h"
-#include "ui/text/text_options.h"
+#include "data/data_user_names.h"
+#include "data/notify/data_notify_settings.h"
+#include "api/api_peer_photo.h"
 #include "apiwrap.h"
+#include "ui/text/text_options.h"
 #include "lang/lang_keys.h"
+#include "styles/style_chat.h"
 
 namespace {
 
@@ -25,6 +31,8 @@ constexpr auto kSetOnlineAfterActivity = TimeId(30);
 using UpdateFlag = Data::PeerUpdate::Flag;
 
 } // namespace
+
+BotInfo::BotInfo() = default;
 
 UserData::UserData(not_null<Data::Session*> owner, PeerId id)
 : PeerData(owner, id)
@@ -49,11 +57,17 @@ void UserData::setIsContact(bool is) {
 // see Serialize::readPeer as well
 void UserData::setPhoto(const MTPUserProfilePhoto &photo) {
 	photo.match([&](const MTPDuserProfilePhoto &data) {
+		if (data.is_personal()) {
+			addFlags(UserDataFlag::PersonalPhoto);
+		} else {
+			removeFlags(UserDataFlag::PersonalPhoto);
+		}
 		updateUserpic(
 			data.vphoto_id().v,
 			data.vdc_id().v,
 			data.is_has_video());
 	}, [&](const MTPDuserProfilePhotoEmpty &) {
+		removeFlags(UserDataFlag::PersonalPhoto);
 		clearUserpic();
 	});
 }
@@ -115,6 +129,27 @@ void UserData::setName(const QString &newFirstName, const QString &newLastName, 
 	updateNameDelayed(newFullName, newPhoneName, newUsername);
 }
 
+void UserData::setUsernames(const Data::Usernames &newUsernames) {
+	const auto wasUsername = username();
+	const auto wasUsernames = usernames();
+	_username.setUsernames(newUsernames);
+	const auto nowUsername = username();
+	const auto nowUsernames = usernames();
+	session().changes().peerUpdated(
+		this,
+		UpdateFlag()
+		| ((wasUsername != nowUsername)
+			? UpdateFlag::Username
+			: UpdateFlag())
+		| (!ranges::equal(wasUsernames, nowUsernames)
+			? UpdateFlag::Usernames
+			: UpdateFlag()));
+}
+
+void UserData::setUsername(const QString &username) {
+	_username.setUsername(username);
+}
+
 void UserData::setPhone(const QString &newPhone) {
 	if (_phone != newPhone) {
 		_phone = newPhone;
@@ -152,10 +187,30 @@ void UserData::setBotInfo(const MTPBotInfo &info) {
 			return;
 		}
 
-		QString desc = qs(d.vdescription().value_or_empty());
-		if (botInfo->description != desc) {
-			botInfo->description = desc;
-			botInfo->text = Ui::Text::String(st::msgMinWidth);
+		const auto description = qs(d.vdescription().value_or_empty());
+		if (botInfo->description != description) {
+			botInfo->description = description;
+			++botInfo->descriptionVersion;
+		}
+		if (const auto photo = d.vdescription_photo()) {
+			const auto parsed = owner().processPhoto(*photo);
+			if (botInfo->photo != parsed) {
+				botInfo->photo = parsed;
+				++botInfo->descriptionVersion;
+			}
+		} else if (botInfo->photo) {
+			botInfo->photo = nullptr;
+			++botInfo->descriptionVersion;
+		}
+		if (const auto document = d.vdescription_document()) {
+			const auto parsed = owner().processDocument(*document);
+			if (botInfo->document != parsed) {
+				botInfo->document = parsed;
+				++botInfo->descriptionVersion;
+			}
+		} else if (botInfo->document) {
+			botInfo->document = nullptr;
+			++botInfo->descriptionVersion;
 		}
 
 		auto commands = d.vcommands()
@@ -202,22 +257,27 @@ void UserData::setAccessHash(uint64 accessHash) {
 	if (accessHash == kInaccessibleAccessHashOld) {
 		_accessHash = 0;
 		_flags.add(Flag::Deleted);
+		invalidateEmptyUserpic();
 	} else {
 		_accessHash = accessHash;
 	}
 }
 
 void UserData::setFlags(UserDataFlags which) {
+	if ((which & UserDataFlag::Deleted)
+		!= (flags() & UserDataFlag::Deleted)) {
+		invalidateEmptyUserpic();
+	}
 	_flags.set((flags() & UserDataFlag::Self)
 		| (which & ~UserDataFlag::Self));
 }
 
 void UserData::addFlags(UserDataFlags which) {
-	_flags.add(which & ~UserDataFlag::Self);
+	setFlags(flags() | which);
 }
 
 void UserData::removeFlags(UserDataFlags which) {
-	_flags.remove(which & ~UserDataFlag::Self);
+	setFlags(flags() & ~which);
 }
 
 bool UserData::isVerified() const {
@@ -252,13 +312,12 @@ bool UserData::isInaccessible() const {
 	return flags() & UserDataFlag::Deleted;
 }
 
-bool UserData::canWrite() const {
-	// Duplicated in Data::CanWriteValue().
-	return !isInaccessible() && !isRepliesChat();
-}
-
 bool UserData::applyMinPhoto() const {
 	return !(flags() & UserDataFlag::DiscardMinPhoto);
+}
+
+bool UserData::hasPersonalPhoto() const {
+	return (flags() & UserDataFlag::PersonalPhoto);
 }
 
 bool UserData::canAddContact() const {
@@ -269,12 +328,20 @@ bool UserData::canReceiveGifts() const {
 	return flags() & UserDataFlag::CanReceiveGifts;
 }
 
-bool UserData::canReceiveVoices() const {
-	return !(flags() & UserDataFlag::VoiceMessagesForbidden);
-}
-
 bool UserData::canShareThisContactFast() const {
 	return !_phone.isEmpty();
+}
+
+QString UserData::username() const {
+	return _username.username();
+}
+
+QString UserData::editableUsername() const {
+	return _username.editableUsername();;
+}
+
+const std::vector<QString> &UserData::usernames() const {
+	return _username.usernames();
 }
 
 const QString &UserData::phone() const {
@@ -312,13 +379,30 @@ bool UserData::hasCalls() const {
 namespace Data {
 
 void ApplyUserUpdate(not_null<UserData*> user, const MTPDuserFull &update) {
-	if (const auto photo = update.vprofile_photo()) {
-		user->owner().processPhoto(*photo);
+	const auto profilePhoto = update.vprofile_photo()
+		? user->owner().processPhoto(*update.vprofile_photo()).get()
+		: nullptr;
+	const auto personalPhoto = update.vpersonal_photo()
+		? user->owner().processPhoto(*update.vpersonal_photo()).get()
+		: nullptr;
+	if (personalPhoto && profilePhoto) {
+		user->session().api().peerPhoto().registerNonPersonalPhoto(
+			user,
+			profilePhoto);
+	} else {
+		user->session().api().peerPhoto().unregisterNonPersonalPhoto(user);
+	}
+	if (const auto photo = update.vfallback_photo()) {
+		const auto data = user->owner().processPhoto(*photo);
+		if (!data->isNull()) { // Sometimes there is photoEmpty :shrug:
+			user->session().storage().add(Storage::UserPhotosSetBack(
+				peerToUser(user->id),
+				data->id
+			));
+		}
 	}
 	user->setSettings(update.vsettings());
-	user->session().api().applyNotifySettings(
-		MTP_inputNotifyPeer(user->input),
-		update.vnotify_settings());
+	user->owner().notifySettings().apply(user, update.vnotify_settings());
 
 	user->setMessagesTTL(update.vttl_period().value_or_empty());
 	if (const auto info = update.vbot_info()) {
@@ -358,6 +442,7 @@ void ApplyUserUpdate(not_null<UserData*> user, const MTPDuserFull &update) {
 	user->setCommonChatsCount(update.vcommon_chats_count().v);
 	user->checkFolder(update.vfolder_id().value_or_empty());
 	user->setThemeEmoji(qs(update.vtheme_emoticon().value_or_empty()));
+	user->setTranslationDisabled(update.is_translations_disabled());
 
 	if (const auto info = user->botInfo.get()) {
 		const auto group = update.vbot_group_admin_rights()

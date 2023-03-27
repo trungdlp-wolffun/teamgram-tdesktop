@@ -30,14 +30,15 @@ public:
 	virtual void paintControlsStart() = 0;
 	virtual void paintControl(
 		OverState control,
-		QRect outer,
-		float64 outerOpacity,
+		QRect over,
+		float64 overOpacity,
 		QRect inner,
 		float64 innerOpacity,
 		const style::icon &icon) = 0;
 	virtual void paintFooter(QRect outer, float64 opacity) = 0;
 	virtual void paintCaption(QRect outer, float64 opacity) = 0;
 	virtual void paintGroupThumbs(QRect outer, float64 opacity) = 0;
+	virtual void paintRoundedCorners(int radius) = 0;
 
 };
 

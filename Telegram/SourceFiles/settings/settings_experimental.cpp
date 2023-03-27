@@ -13,18 +13,22 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
 #include "ui/gl/gl_detection.h"
+#include "ui/chat/chat_style_radius.h"
 #include "base/options.h"
 #include "core/application.h"
+#include "core/launcher.h"
 #include "chat_helpers/tabbed_panel.h"
-#include "dialogs/dialogs_inner_widget.h"
-#include "history/history_widget.h"
 #include "lang/lang_keys.h"
+#include "mainwindow.h"
 #include "media/player/media_player_instance.h"
 #include "webview/webview_embed.h"
 #include "window/window_peer_menu.h"
 #include "window/window_session_controller.h"
 #include "window/window_controller.h"
+#include "window/notifications_manager.h"
 #include "settings/settings_common.h"
+#include "storage/localimageloader.h"
+#include "data/data_document_resolver.h"
 #include "styles/style_settings.h"
 #include "styles/style_layers.h"
 
@@ -134,13 +138,18 @@ void SetupExperimental(
 	};
 
 	addToggle(ChatHelpers::kOptionTabbedPanelShowOnClick);
+	addToggle(Core::kOptionFractionalScalingEnabled);
 	addToggle(Window::kOptionViewProfileInChatsListContextMenu);
-	addToggle(Dialogs::kOptionCtrlClickChatNewWindow);
 	addToggle(Ui::GL::kOptionAllowLinuxNvidiaOpenGL);
+	addToggle(Ui::kOptionUseSmallMsgBubbleRadius);
 	addToggle(Media::Player::kOptionDisableAutoplayNext);
+	addToggle(kOptionSendLargePhotos);
 	addToggle(Settings::kOptionMonoSettingsIcons);
 	addToggle(Webview::kOptionWebviewDebugEnabled);
 	addToggle(kOptionAutoScrollInactiveChat);
+	addToggle(Window::Notifications::kOptionGNotification);
+	addToggle(Core::kOptionFreeType);
+	addToggle(Data::kOptionExternalVideoPlayer);
 }
 
 } // namespace

@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/click_handler_types.h"
 #include "data/stickers/data_custom_emoji.h"
 #include "data/data_session.h"
+#include "ui/text/text_custom_emoji.h"
 #include "ui/basic_click_handlers.h"
 #include "ui/emoji_config.h"
 #include "lang/lang_keys.h"
@@ -23,6 +24,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_session.h"
 #include "main/main_app_config.h"
+#include "mtproto/mtproto_config.h"
+#include "window/window_controller.h"
 #include "mainwindow.h"
 
 namespace Core {
@@ -46,9 +49,9 @@ const auto kBadPrefix = u"http://"_q;
 		const QString &url,
 		QUrl parsed,
 		const QString &domain) {
-	const auto &config = Core::App().activeAccount().appConfig();
-	const auto token = config.get<QString>("autologin_token", {});
-	const auto domains = config.get<std::vector<QString>>(
+	const auto &active = Core::App().activeAccount();
+	const auto token = active.mtp().configValues().autologinToken;
+	const auto domains = active.appConfig().get<std::vector<QString>>(
 		"autologin_domains",
 		{});
 	if (token.isEmpty()
@@ -122,8 +125,8 @@ QString UiIntegration::angleBackendFilePath() {
 }
 
 void UiIntegration::textActionsUpdated() {
-	if (const auto window = App::wnd()) {
-		window->updateGlobalMenu();
+	if (const auto window = Core::App().activeWindow()) {
+		window->widget()->updateGlobalMenu();
 	}
 }
 
@@ -133,10 +136,6 @@ void UiIntegration::activationFromTopPanel() {
 
 bool UiIntegration::screenIsLocked() {
 	return Core::App().screenIsLocked();
-}
-
-QString UiIntegration::timeFormat() {
-	return cTimeFormat();
 }
 
 std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
@@ -162,13 +161,13 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 		using HashtagMentionType = MarkedTextContext::HashtagMentionType;
 		if (my && my->type == HashtagMentionType::Twitter) {
 			return std::make_shared<UrlClickHandler>(
-				(qsl("https://twitter.com/hashtag/")
+				(u"https://twitter.com/hashtag/"_q
 					+ data.data.mid(1)
-					+ qsl("?src=hash")),
+					+ u"?src=hash"_q),
 				true);
 		} else if (my && my->type == HashtagMentionType::Instagram) {
 			return std::make_shared<UrlClickHandler>(
-				(qsl("https://instagram.com/explore/tags/")
+				(u"https://instagram.com/explore/tags/"_q
 					+ data.data.mid(1)
 					+ '/'),
 				true);
@@ -182,11 +181,11 @@ std::shared_ptr<ClickHandler> UiIntegration::createLinkHandler(
 		using HashtagMentionType = MarkedTextContext::HashtagMentionType;
 		if (my && my->type == HashtagMentionType::Twitter) {
 			return std::make_shared<UrlClickHandler>(
-				qsl("https://twitter.com/") + data.data.mid(1),
+				u"https://twitter.com/"_q + data.data.mid(1),
 				true);
 		} else if (my && my->type == HashtagMentionType::Instagram) {
 			return std::make_shared<UrlClickHandler>(
-				qsl("https://instagram.com/") + data.data.mid(1) + '/',
+				u"https://instagram.com/"_q + data.data.mid(1) + '/',
 				true);
 		}
 		return std::make_shared<MentionClickHandler>(data.data);
@@ -225,10 +224,10 @@ bool UiIntegration::handleUrlClick(
 	if (UrlClickHandler::IsEmail(url)) {
 		File::OpenEmailLink(url);
 		return true;
-	} else if (local.startsWith(qstr("tg2://"), Qt::CaseInsensitive)) {
+	} else if (local.startsWith(u"tg2://"_q, Qt::CaseInsensitive)) {
 		Core::App().openLocalUrl(local, context);
 		return true;
-	} else if (local.startsWith(qstr("internal:"), Qt::CaseInsensitive)) {
+	} else if (local.startsWith(u"internal:"_q, Qt::CaseInsensitive)) {
 		Core::App().openInternalUrl(local, context);
 		return true;
 	}
@@ -249,9 +248,15 @@ std::unique_ptr<Ui::Text::CustomEmoji> UiIntegration::createCustomEmoji(
 	if (!my || !my->session) {
 		return nullptr;
 	}
-	return my->session->data().customEmojiManager().create(
+	auto result = my->session->data().customEmojiManager().create(
 		data,
 		my->customEmojiRepaint);
+	if (my->customEmojiLoopLimit > 0) {
+		return std::make_unique<Ui::Text::LimitedLoopsEmoji>(
+			std::move(result),
+			my->customEmojiLoopLimit);
+	}
+	return result;
 }
 
 Fn<void()> UiIntegration::createSpoilerRepaint(const std::any &context) {

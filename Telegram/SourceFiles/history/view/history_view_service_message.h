@@ -9,12 +9,20 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "history/view/history_view_element.h"
 
-class HistoryService;
+class HistoryItem;
 
 namespace Ui {
 class ChatStyle;
 struct CornersPixmaps;
 } // namespace Ui
+
+namespace Data {
+class ForumTopic;
+} // namespace Data
+
+namespace Info::Profile {
+class TopicIconView;
+} // namespace Info::Profile
 
 namespace HistoryView {
 
@@ -22,7 +30,7 @@ class Service final : public Element {
 public:
 	Service(
 		not_null<ElementDelegate*> delegate,
-		not_null<HistoryService*> data,
+		not_null<HistoryItem*> data,
 		Element *replacing);
 
 	int marginTop() const override;
@@ -42,9 +50,7 @@ public:
 	QRect innerGeometry() const override;
 
 private:
-	not_null<HistoryService*> message() const;
-
-	QRect countGeometry() const;
+	[[nodiscard]] QRect countGeometry() const;
 
 	QSize performCountOptimalSize() override;
 	QSize performCountCurrentSize(int newWidth) override;
@@ -116,6 +122,11 @@ private:
 class EmptyPainter {
 public:
 	explicit EmptyPainter(not_null<History*> history);
+	EmptyPainter(
+		not_null<Data::ForumTopic*> topic,
+		Fn<bool()> paused,
+		Fn<void()> update);
+	~EmptyPainter();
 
 	void paint(
 		Painter &p,
@@ -125,11 +136,16 @@ public:
 
 private:
 	void fillAboutGroup();
+	void fillAboutTopic();
 
 	not_null<History*> _history;
-	Ui::Text::String _header = { st::msgMinWidth };
-	Ui::Text::String _text = { st::msgMinWidth };
+	Data::ForumTopic *_topic = nullptr;
+	std::unique_ptr<Info::Profile::TopicIconView> _icon;
+	Ui::Text::String _header;
+	Ui::Text::String _text;
 	std::vector<Ui::Text::String> _phrases;
+
+	rpl::lifetime _lifetime;
 
 };
 

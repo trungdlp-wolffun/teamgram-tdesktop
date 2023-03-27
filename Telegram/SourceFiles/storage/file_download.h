@@ -7,8 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-#include "base/observer.h"
-#include "base/timer.h"
 #include "base/binary_guard.h"
 #include "base/weak_ptr.h"
 
@@ -54,6 +52,17 @@ struct StorageImageSaved {
 
 class FileLoader : public base::has_weak_ptr {
 public:
+	enum class FailureReason {
+		NoFailure,
+		FileWriteFailure,
+		OtherFailure,
+	};
+
+	struct Error {
+		FailureReason failureReason = FailureReason::NoFailure;
+		bool started = false;
+	};
+
 	FileLoader(
 		not_null<Main::Session*> session,
 		const QString &toFile,
@@ -115,7 +124,7 @@ public:
 		const QByteArray &imageFormat,
 		const QImage &imageData);
 
-	[[nodiscard]] rpl::producer<rpl::empty_value, bool> updates() const {
+	[[nodiscard]] rpl::producer<rpl::empty_value, Error> updates() const {
 		return _updates.events();
 	}
 
@@ -144,7 +153,7 @@ protected:
 		startLoading();
 	}
 
-	void cancel(bool failed);
+	void cancel(FailureReason failed);
 
 	void notifyAboutProgress();
 
@@ -179,7 +188,7 @@ protected:
 	mutable QImage _imageData;
 
 	rpl::lifetime _lifetime;
-	rpl::event_stream<rpl::empty_value, bool> _updates;
+	rpl::event_stream<rpl::empty_value, Error> _updates;
 
 };
 

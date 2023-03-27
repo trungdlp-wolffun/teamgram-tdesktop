@@ -83,7 +83,7 @@ enum class FilterType {
 	const auto decimalPart = duration % kPrecision;
 	return QString("%1%2%3")
 		.arg(durationString)
-		.arg(QLocale::system().decimalPoint())
+		.arg(QLocale().decimalPoint())
 		.arg(decimalPart);
 }
 
@@ -837,7 +837,7 @@ void RecordLock::drawProgress(Painter &p) {
 				arcWidth,
 				arcHeight * 2,
 				0,
-				180 * 16);
+				arc::kHalfLength);
 
 			const auto lockProgress = 1. - _lockToStopProgress;
 			if (progress == 1. && lockProgress < 1.) {
@@ -912,7 +912,7 @@ rpl::producer<> RecordLock::locks() const {
 }
 
 QImage RecordLock::prepareRippleMask() const {
-	return Ui::RippleAnimation::ellipseMask(_rippleRect.size());
+	return Ui::RippleAnimation::EllipseMask(_rippleRect.size());
 }
 
 QPoint RecordLock::prepareRippleStartPosition() const {
@@ -945,7 +945,7 @@ CancelButton::CancelButton(not_null<Ui::RpWidget*> parent, int height)
 : Ui::RippleButton(parent, st::defaultLightButton.ripple)
 , _width(st::historyRecordCancelButtonWidth)
 , _rippleRect(QRect(0, (height - _width) / 2, _width, _width))
-, _text(st::semiboldTextStyle, tr::lng_selected_clear(tr::now).toUpper()) {
+, _text(st::semiboldTextStyle, tr::lng_selected_clear(tr::now)) {
 	resize(_width, height);
 	init();
 }
@@ -976,7 +976,7 @@ void CancelButton::init() {
 }
 
 QImage CancelButton::prepareRippleMask() const {
-	return Ui::RippleAnimation::ellipseMask(_rippleRect.size());
+	return Ui::RippleAnimation::EllipseMask(_rippleRect.size());
 }
 
 QPoint CancelButton::prepareRippleStartPosition() const {

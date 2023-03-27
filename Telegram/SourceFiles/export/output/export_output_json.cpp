@@ -475,8 +475,16 @@ QByteArray SerializeMessage(
 		pushActor();
 		push("information_text", data.message);
 	}, [&](const ActionBotAllowed &data) {
-		pushAction("allow_sending_messages");
-		push("reason_domain", data.domain);
+		if (data.attachMenu) {
+			pushAction("attach_menu_bot_allowed");
+		} else if (data.appId) {
+			pushAction("allow_sending_messages");
+			push("reason_app_id", data.appId);
+			push("reason_app_name", data.app);
+		} else {
+			pushAction("allow_sending_messages");
+			push("reason_domain", data.domain);
+		}
 	}, [&](const ActionSecureValuesSent &data) {
 		pushAction("send_passport_values");
 		auto list = std::vector<QByteArray>();
@@ -560,6 +568,28 @@ QByteArray SerializeMessage(
 		if (data.months) {
 			push("months", data.months);
 		}
+	}, [&](const ActionTopicCreate &data) {
+		pushActor();
+		pushAction("topic_created");
+		push("title", data.title);
+	}, [&](const ActionTopicEdit &data) {
+		pushActor();
+		pushAction("topic_edit");
+		if (!data.title.isEmpty()) {
+			push("new_title", data.title);
+		}
+		if (data.iconEmojiId) {
+			push("new_icon_emoji_id", *data.iconEmojiId);
+		}
+	}, [&](const ActionSuggestProfilePhoto &data) {
+		pushActor();
+		pushAction("suggest_profile_photo");
+		pushPhoto(data.photo.image);
+	}, [&](const ActionRequestedPeer &data) {
+		pushActor();
+		pushAction("requested_peer");
+		push("button_id", data.buttonId);
+		push("peer_id", data.peerId.value);
 	}, [](v::null_t) {});
 
 	if (v::is_null(message.action.content)) {

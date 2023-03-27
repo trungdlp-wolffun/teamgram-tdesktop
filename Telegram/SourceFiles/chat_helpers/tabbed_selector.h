@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/effects/animations.h"
 #include "ui/effects/message_sending_animation_common.h"
 #include "ui/effects/panel_animation.h"
+#include "ui/cached_round_corners.h"
 #include "mtproto/sender.h"
 #include "base/object_ptr.h"
 
@@ -30,6 +31,7 @@ class ScrollArea;
 class SettingsSlider;
 class FlatLabel;
 class BoxContent;
+class TabbedSearch;
 } // namespace Ui
 
 namespace Window {
@@ -75,6 +77,14 @@ struct EmojiChosen {
 };
 
 using InlineChosen = InlineBots::ResultSelected;
+
+[[nodiscard]] std::unique_ptr<Ui::TabbedSearch> MakeSearch(
+	not_null<Ui::RpWidget*> parent,
+	const style::EmojiPan &st,
+	Fn<void(std::vector<QString>&&)> callback,
+	not_null<Main::Session*> session,
+	bool statusCategories = false,
+	bool profilePhotoCategories = false);
 
 class TabbedSelector : public Ui::RpWidget {
 public:
@@ -252,6 +262,8 @@ private:
 	Mode _mode = Mode::Full;
 	int _roundRadius = 0;
 	int _footerTop = 0;
+	Ui::CornersPixmaps _panelRounding;
+	Ui::CornersPixmaps _categoriesRounding;
 	PeerData *_currentPeer = nullptr;
 
 	class SlideAnimation;
@@ -363,6 +375,11 @@ protected:
 	void disableScroll(bool disabled);
 
 	void checkHideWithBox(QPointer<Ui::BoxContent> box);
+
+	void paintEmptySearchResults(
+		Painter &p,
+		const style::icon &icon,
+		const QString &text) const;
 
 private:
 	const style::EmojiPan &_st;

@@ -24,7 +24,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_click_handler.h"
 #include "data/data_file_origin.h"
 #include "data/data_download_manager.h"
+#include "data/data_forum_topic.h"
 #include "history/history_item.h"
+#include "history/history_item_helpers.h"
 #include "history/history.h"
 #include "history/view/history_view_cursor_state.h"
 #include "history/view/history_view_service_message.h"
@@ -45,16 +47,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "base/platform/base_platform_info.h"
 #include "base/weak_ptr.h"
+#include "base/call_delayed.h"
 #include "media/player/media_player_instance.h"
 #include "boxes/delete_messages_box.h"
 #include "boxes/peer_list_controllers.h"
 #include "core/file_utilities.h"
 #include "core/application.h"
-#include "facades.h"
 #include "styles/style_overview.h"
 #include "styles/style_info.h"
 #include "styles/style_layers.h"
 #include "styles/style_menu_icons.h"
+#include "styles/style_chat.h"
 
 #include <QtWidgets/QApplication>
 #include <QtGui/QClipboard>
@@ -466,7 +469,7 @@ bool ListWidget::tooltipWindowActive() const {
 }
 
 void ListWidget::openPhoto(not_null<PhotoData*> photo, FullMsgId id) {
-	_controller->parentController()->openPhoto(photo, id);
+	_controller->parentController()->openPhoto(photo, id, topicRootId());
 }
 
 void ListWidget::openDocument(
@@ -476,6 +479,7 @@ void ListWidget::openDocument(
 	_controller->parentController()->openDocument(
 		document,
 		id,
+		topicRootId(),
 		showInMediaView);
 }
 
@@ -738,6 +742,11 @@ void ListWidget::restoreScrollState() {
 	_scrollTopState = ListScrollTopState();
 }
 
+MsgId ListWidget::topicRootId() const {
+	const auto topic = _controller->key().topic();
+	return topic ? topic->rootId() : MsgId(0);
+}
+
 QMargins ListWidget::padding() const {
 	return st::infoMediaMargin;
 }
@@ -752,8 +761,11 @@ void ListWidget::paintEvent(QPaintEvent *e) {
 	auto tillSectionIt = findSectionAfterBottom(
 		fromSectionIt,
 		clip.y() + clip.height());
-	auto context = ListContext {
-		Overview::Layout::PaintContext(ms, hasSelectedItems()),
+	const auto window = _controller->parentController();
+	const auto paused = window->isGifPausedAtLeastFor(
+		Window::GifPauseReason::Layer);
+	auto context = ListContext{
+		Overview::Layout::PaintContext(ms, hasSelectedItems(), paused),
 		&_selected,
 		&_dragSelected,
 		_dragSelectAction
@@ -776,8 +788,7 @@ void ListWidget::paintEvent(QPaintEvent *e) {
 			if (_dateBadge->corners.p[0].isNull()) {
 				_dateBadge->corners = Ui::PrepareCornerPixmaps(
 					Ui::HistoryServiceMsgRadius(),
-					st::roundedBg,
-					nullptr);
+					st::roundedBg);
 			}
 			HistoryView::ServiceMessagePainter::PaintDate(
 				p,
@@ -885,7 +896,7 @@ void ListWidget::showContextMenu(
 			tr::lng_context_to_msg(tr::now),
 			[=] {
 				if (const auto item = MessageByGlobalId(globalId)) {
-					goToMessageClickHandler(item)->onClick({});
+					JumpToMessageClickHandler(item)->onClick({});
 				}
 			},
 			&st::menuIconShowInChat);
@@ -925,7 +936,7 @@ void ListWidget::showContextMenu(
 					item,
 					lnkDocument);
 				if (!filepath.isEmpty()) {
-					auto handler = App::LambdaDelayed(
+					auto handler = base::fn_delayed(
 						st::defaultDropdownMenu.menu.ripple.hideDuration,
 						this,
 						[filepath] {
@@ -938,7 +949,7 @@ void ListWidget::showContextMenu(
 						std::move(handler),
 						&st::menuIconShowInFolder);
 				}
-				auto handler = App::LambdaDelayed(
+				auto handler = base::fn_delayed(
 					st::defaultDropdownMenu.menu.ripple.hideDuration,
 					this,
 					[=] {
@@ -1638,7 +1649,7 @@ void ListWidget::performDrag() {
 	//		auto selectedState = getSelectionState();
 	//		if (selectedState.count > 0 && selectedState.count == selectedState.canForwardCount) {
 	//			session().data().setMimeForwardIds(collectSelectedIds());
-	//			mimeData->setData(qsl("application/x-td-forward"), "1");
+	//			mimeData->setData(u"application/x-td-forward"_q, "1");
 	//		}
 	//	}
 	//	_controller->parentController()->window()->launchDrag(std::move(mimeData));
@@ -1650,14 +1661,14 @@ void ListWidget::performDrag() {
 	//		pressedMedia = pressedItem->getMedia();
 	//		if (_mouseCursorState == CursorState::Date || (pressedMedia && pressedMedia->dragItem())) {
 	//			session().data().setMimeForwardIds(session().data().itemOrItsGroup(pressedItem));
-	//			forwardMimeType = qsl("application/x-td-forward");
+	//			forwardMimeType = u"application/x-td-forward"_q;
 	//		}
 	//	}
 	//	if (auto pressedLnkItem = App::pressedLinkItem()) {
 	//		if ((pressedMedia = pressedLnkItem->getMedia())) {
 	//			if (forwardMimeType.isEmpty() && pressedMedia->dragItemByHandler(pressedHandler)) {
 	//				session().data().setMimeForwardIds({ 1, pressedLnkItem->fullId() });
-	//				forwardMimeType = qsl("application/x-td-forward");
+	//				forwardMimeType = u"application/x-td-forward"_q;
 	//			}
 	//		}
 	//	}
@@ -1719,7 +1730,7 @@ void ListWidget::mouseActionFinish(
 			QVariant::fromValue(ClickHandlerContext{
 				.itemId = fullId,
 				.sessionWindow = base::make_weak(
-					_controller->parentController().get()),
+					_controller->parentController()),
 			})
 		});
 		return;

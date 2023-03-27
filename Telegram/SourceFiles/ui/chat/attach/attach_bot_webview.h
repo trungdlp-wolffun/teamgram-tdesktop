@@ -48,11 +48,13 @@ public:
 		Fn<bool(QString)> handleLocalUri,
 		Fn<void(QString)> handleInvoice,
 		Fn<void(QByteArray)> sendData,
+		Fn<void(std::vector<QString>, QString)> switchInlineQuery,
 		Fn<void()> close,
 		QString phone,
 		MenuButtons menuButtons,
 		Fn<void(MenuButton)> handleMenuButton,
-		Fn<Webview::ThemeParams()> themeParams);
+		Fn<Webview::ThemeParams()> themeParams,
+		bool allowClipboardRead);
 	~Panel();
 
 	void requestActivate();
@@ -87,6 +89,7 @@ private:
 	void hideWebviewProgress();
 	void setTitle(rpl::producer<QString> title);
 	void sendDataMessage(const QJsonObject &args);
+	void switchInlineQueryMessage(const QJsonObject &args);
 	void processMainButtonMessage(const QJsonObject &args);
 	void processBackButtonMessage(const QJsonObject &args);
 	void openTgLink(const QJsonObject &args);
@@ -94,13 +97,19 @@ private:
 	void openInvoice(const QJsonObject &args);
 	void openPopup(const QJsonObject &args);
 	void requestPhone();
+	void requestClipboardText(const QJsonObject &args);
 	void setupClosingBehaviour(const QJsonObject &args);
 	void createMainButton();
 	void scheduleCloseWithConfirmation();
 	void closeWithConfirmation();
+	void sendViewport();
 
-	void postEvent(const QString &event, const QString &data = {});
+	using EventData = std::variant<QString, QJsonObject>;
+	void postEvent(const QString &event);
+	void postEvent(const QString &event, EventData data);
 
+	[[nodiscard]] bool allowOpenLink() const;
+	[[nodiscard]] bool allowClipboardQuery() const;
 	[[nodiscard]] bool progressWithBackground() const;
 	[[nodiscard]] QRect progressRect() const;
 	void setupProgressGeometry();
@@ -109,6 +118,7 @@ private:
 	Fn<bool(QString)> _handleLocalUri;
 	Fn<void(QString)> _handleInvoice;
 	Fn<void(QByteArray)> _sendData;
+	Fn<void(std::vector<QString>, QString)> _switchInlineQuery;
 	Fn<void()> _close;
 	QString _phone;
 	bool _closeNeedConfirmation = false;
@@ -119,7 +129,7 @@ private:
 	std::unique_ptr<RpWidget> _webviewBottom;
 	QPointer<QWidget> _webviewParent;
 	std::unique_ptr<Button> _mainButton;
-	crl::time _mainButtonLastClick = 0;
+	mutable crl::time _mainButtonLastClick = 0;
 	std::unique_ptr<Progress> _progress;
 	rpl::event_stream<> _themeUpdateForced;
 	rpl::lifetime _fgLifetime;
@@ -128,6 +138,7 @@ private:
 	bool _themeUpdateScheduled = false;
 	bool _hiddenForPayment = false;
 	bool _closeWithConfirmationScheduled = false;
+	bool _allowClipboardRead = false;
 
 };
 
@@ -139,11 +150,13 @@ struct Args {
 	Fn<bool(QString)> handleLocalUri;
 	Fn<void(QString)> handleInvoice;
 	Fn<void(QByteArray)> sendData;
+	Fn<void(std::vector<QString>, QString)> switchInlineQuery;
 	Fn<void()> close;
 	QString phone;
 	MenuButtons menuButtons;
 	Fn<void(MenuButton)> handleMenuButton;
 	Fn<Webview::ThemeParams()> themeParams;
+	bool allowClipboardRead = false;
 };
 [[nodiscard]] std::unique_ptr<Panel> Show(Args &&args);
 

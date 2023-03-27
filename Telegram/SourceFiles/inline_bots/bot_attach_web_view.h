@@ -11,6 +11,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/weak_ptr.h"
 #include "base/flags.h"
 
+namespace Api {
+struct SendAction;
+} // namespace Api
+
 namespace Ui {
 class GenericBox;
 class DropdownMenu;
@@ -57,6 +61,7 @@ struct AttachWebViewBot {
 	PeerTypes types = 0;
 	bool inactive = false;
 	bool hasSettings = false;
+	bool requestWriteAccess = false;
 };
 
 class AttachWebView final : public base::has_weak_ptr {
@@ -68,14 +73,17 @@ public:
 		QString text;
 		QString startCommand;
 		QByteArray url;
+		bool fromMenu = false;
+		bool fromSwitch = false;
 	};
 	void request(
-		not_null<PeerData*> peer,
+		not_null<Window::SessionController*> controller,
+		const Api::SendAction &action,
 		const QString &botUsername,
 		const QString &startCommand);
 	void request(
-		Window::SessionController *controller,
-		not_null<PeerData*> peer,
+		not_null<Window::SessionController*> controller,
+		const Api::SendAction &action,
 		not_null<UserData*> bot,
 		const WebViewButton &button);
 	void requestSimple(
@@ -85,6 +93,13 @@ public:
 	void requestMenu(
 		not_null<Window::SessionController*> controller,
 		not_null<UserData*> bot);
+	void requestApp(
+		not_null<Window::SessionController*> controller,
+		const Api::SendAction &action,
+		not_null<UserData*> bot,
+		const QString &appName,
+		const QString &startParam,
+		bool forceConfirmation);
 
 	void cancel();
 
@@ -97,16 +112,34 @@ public:
 	}
 
 	void requestAddToMenu(
-		PeerData *peer,
+		not_null<UserData*> bot,
+		const QString &startCommand);
+	void requestAddToMenu(
 		not_null<UserData*> bot,
 		const QString &startCommand,
-		Window::SessionController *controller = nullptr,
-		PeerTypes chooseTypes = {});
+		Window::SessionController *controller,
+		std::optional<Api::SendAction> action,
+		PeerTypes chooseTypes);
 	void removeFromMenu(not_null<UserData*> bot);
 
 	static void ClearAll();
 
 private:
+	struct Context;
+
+	[[nodiscard]] static Context LookupContext(
+		not_null<Window::SessionController*> controller,
+		const Api::SendAction &action);
+	[[nodiscard]] static bool IsSame(
+		const std::unique_ptr<Context> &a,
+		const Context &b);
+
+	void requestWithOptionalConfirm(
+		not_null<UserData*> bot,
+		const WebViewButton &button,
+		const Context &context,
+		Window::SessionController *controllerForConfirm = nullptr);
+
 	void resolve();
 	void request(const WebViewButton &button);
 	void requestSimple(const WebViewButton &button);
@@ -118,28 +151,41 @@ private:
 		not_null<Window::SessionController*> controller,
 		Fn<void()> done);
 
+	enum class ToggledState {
+		Removed,
+		Added,
+		AllowedToWrite,
+	};
 	void toggleInMenu(
 		not_null<UserData*> bot,
-		bool enabled,
+		ToggledState state,
 		Fn<void()> callback = nullptr);
 
 	void show(
 		uint64 queryId,
 		const QString &url,
-		const QString &buttonText = QString());
+		const QString &buttonText = QString(),
+		bool allowClipboardRead = false);
 	void confirmAddToMenu(
 		AttachWebViewBot bot,
 		Fn<void()> callback = nullptr);
+	void confirmAppOpen(bool requestWriteAccess);
+	void requestAppView(bool allowWrite);
 	void started(uint64 queryId);
+
+	void showToast(
+		const QString &text,
+		Window::SessionController *controller = nullptr);
 
 	const not_null<Main::Session*> _session;
 
-	PeerData *_peer = nullptr;
+	std::unique_ptr<Context> _context;
 	UserData *_bot = nullptr;
 	QString _botUsername;
+	QString _botAppName;
 	QString _startCommand;
+	BotAppData *_app = nullptr;
 	QPointer<Ui::GenericBox> _confirmAddBox;
-	MsgId _replyToMsgId;
 
 	mtpRequestId _requestId = 0;
 	mtpRequestId _prolongId = 0;
@@ -147,7 +193,7 @@ private:
 	uint64 _botsHash = 0;
 	mtpRequestId _botsRequestId = 0;
 
-	PeerData *_addToMenuPeer = nullptr;
+	std::unique_ptr<Context> _addToMenuContext;
 	UserData *_addToMenuBot = nullptr;
 	mtpRequestId _addToMenuId = 0;
 	QString _addToMenuStartCommand;
@@ -163,7 +209,9 @@ private:
 
 [[nodiscard]] std::unique_ptr<Ui::DropdownMenu> MakeAttachBotsMenu(
 	not_null<QWidget*> parent,
+	not_null<Window::SessionController*> controller,
 	not_null<PeerData*> peer,
+	Fn<Api::SendAction()> actionFactory,
 	Fn<void(bool)> attach);
 
 } // namespace InlineBots

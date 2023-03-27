@@ -35,10 +35,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history.h"
 #include "history/history_item.h"
 #include "history/history_item_components.h"
+#include "history/history_item_helpers.h"
 #include "history/view/history_view_cursor_state.h"
 #include "history/view/media/history_view_document.h" // DrawThumbnailAsSongCover
 #include "base/unixtime.h"
 #include "ui/effects/round_checkbox.h"
+#include "ui/effects/spoiler_mess.h"
 #include "ui/image/image.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/text/format_values.h"
@@ -46,6 +48,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/cached_round_corners.h"
 #include "ui/painter.h"
+#include "ui/power_saving.h"
 #include "ui/ui_utility.h"
 
 namespace Overview {
@@ -200,6 +203,7 @@ void RadialProgressItem::setDocumentLinks(
 		std::make_shared<DocumentOpenClickHandler>(
 			document,
 			crl::guard(this, [=](FullMsgId id) {
+				clearSpoiler();
 				delegate()->openDocument(document, id, forceOpen);
 			}),
 			context),
@@ -276,7 +280,7 @@ void StatusText::update(
 	if (_size == Ui::FileStatusSizeReady) {
 		_text = (duration >= 0) ? Ui::FormatDurationAndSizeText(duration, fullSize) : (duration < -1 ? Ui::FormatGifAndSizeText(fullSize) : Ui::FormatSizeText(fullSize));
 	} else if (_size == Ui::FileStatusSizeLoaded) {
-		_text = (duration >= 0) ? Ui::FormatDurationText(duration) : (duration < -1 ? qsl("GIF") : Ui::FormatSizeText(fullSize));
+		_text = (duration >= 0) ? Ui::FormatDurationText(duration) : (duration < -1 ? u"GIF"_q : Ui::FormatSizeText(fullSize));
 	} else if (_size == Ui::FileStatusSizeFailed) {
 		_text = tr::lng_attach_failed(tr::now);
 	} else if (_size >= 0) {
@@ -293,13 +297,20 @@ void StatusText::setSize(int64 newSize) {
 Photo::Photo(
 	not_null<Delegate*> delegate,
 	not_null<HistoryItem*> parent,
-	not_null<PhotoData*> photo)
+	not_null<PhotoData*> photo,
+	bool spoiler)
 : ItemBase(delegate, parent)
 , _data(photo)
 , _link(std::make_shared<PhotoOpenClickHandler>(
 	photo,
-	crl::guard(this, [=](FullMsgId id) { delegate->openPhoto(photo, id); }),
-	parent->fullId())) {
+	crl::guard(this, [=](FullMsgId id) {
+		clearSpoiler();
+		delegate->openPhoto(photo, id);
+	}),
+	parent->fullId()))
+, _spoiler(spoiler ? std::make_unique<Ui::SpoilerAnimation>([=] {
+	delegate->repaintItem(this);
+}) : nullptr) {
 	if (_data->inlineThumbnailBytes().isEmpty()
 		&& (_data->hasExact(Data::PhotoSize::Small)
 			|| _data->hasExact(Data::PhotoSize::Thumbnail))) {
@@ -326,8 +337,9 @@ void Photo::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 	const auto widthChanged = _pix.width() != _width * cIntRetinaFactor();
 	if (!_goodLoaded || widthChanged) {
 		ensureDataMediaCreated();
-		const auto good = _dataMedia->loaded()
-			|| (_dataMedia->image(Data::PhotoSize::Thumbnail) != nullptr);
+		const auto good = !_spoiler
+			&& (_dataMedia->loaded()
+				|| _dataMedia->image(Data::PhotoSize::Thumbnail));
 		if ((good && !_goodLoaded) || widthChanged) {
 			_goodLoaded = good;
 			_pix = QPixmap();
@@ -335,8 +347,9 @@ void Photo::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 				setPixFrom(_dataMedia->image(Data::PhotoSize::Large)
 					? _dataMedia->image(Data::PhotoSize::Large)
 					: _dataMedia->image(Data::PhotoSize::Thumbnail));
-			} else if (const auto small = _dataMedia->image(
-					Data::PhotoSize::Small)) {
+			} else if (const auto small = _spoiler
+				? nullptr
+				: _dataMedia->image(Data::PhotoSize::Small)) {
 				setPixFrom(small);
 			} else if (const auto blurred = _dataMedia->thumbnailInline()) {
 				setPixFrom(blurred);
@@ -348,6 +361,15 @@ void Photo::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 		p.fillRect(0, 0, _width, _height, st::overviewPhotoBg);
 	} else {
 		p.drawPixmap(0, 0, _pix);
+	}
+
+	if (_spoiler) {
+		const auto paused = context->paused || On(PowerSaving::kChatSpoiler);
+		Ui::FillSpoilerRect(
+			p,
+			QRect(0, 0, _width, _height),
+			Ui::DefaultImageSpoiler().frame(
+				_spoiler->index(context->ms, paused)));
 	}
 
 	if (selected) {
@@ -398,6 +420,14 @@ void Photo::ensureDataMediaCreated() const {
 	delegate()->registerHeavyItem(this);
 }
 
+void Photo::clearSpoiler() {
+	if (_spoiler) {
+		_spoiler = nullptr;
+		_pix = QPixmap();
+		delegate()->repaintItem(this);
+	}
+}
+
 void Photo::clearHeavyPart() {
 	_dataMedia = nullptr;
 }
@@ -414,10 +444,14 @@ TextState Photo::getState(
 Video::Video(
 	not_null<Delegate*> delegate,
 	not_null<HistoryItem*> parent,
-	not_null<DocumentData*> video)
+	not_null<DocumentData*> video,
+	bool spoiler)
 : RadialProgressItem(delegate, parent)
 , _data(video)
-, _duration(Ui::FormatDurationText(_data->getDuration())) {
+, _duration(Ui::FormatDurationText(_data->getDuration()))
+, _spoiler(spoiler ? std::make_unique<Ui::SpoilerAnimation>([=] {
+	delegate->repaintItem(this);
+}) : nullptr) {
 	setDocumentLinks(_data);
 	_data->loadThumbnail(parent->fullId());
 }
@@ -440,8 +474,8 @@ void Video::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 
 	const auto selected = (selection == FullSelection);
 	const auto blurred = _dataMedia->thumbnailInline();
-	const auto thumbnail = _dataMedia->thumbnail();
-	const auto good = _dataMedia->goodThumbnail();
+	const auto thumbnail = _spoiler ? nullptr : _dataMedia->thumbnail();
+	const auto good = _spoiler ? nullptr : _dataMedia->goodThumbnail();
 
 	bool loaded = dataLoaded(), displayLoading = _data->displayLoading();
 	if (displayLoading) {
@@ -482,6 +516,15 @@ void Video::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 		p.fillRect(0, 0, _width, _height, st::overviewPhotoBg);
 	} else {
 		p.drawPixmap(0, 0, _pix);
+	}
+
+	if (_spoiler) {
+		const auto paused = context->paused || On(PowerSaving::kChatSpoiler);
+		Ui::FillSpoilerRect(
+			p,
+			QRect(0, 0, _width, _height),
+			Ui::DefaultImageSpoiler().frame(
+				_spoiler->index(context->ms, paused)));
 	}
 
 	if (selected) {
@@ -551,6 +594,14 @@ void Video::ensureDataMediaCreated() const {
 	_dataMedia->goodThumbnailWanted();
 	_dataMedia->thumbnailWanted(parent()->fullId());
 	delegate()->registerHeavyItem(this);
+}
+
+void Video::clearSpoiler() {
+	if (_spoiler) {
+		_spoiler = nullptr;
+		_pix = QPixmap();
+		delegate()->repaintItem(this);
+	}
 }
 
 void Video::clearHeavyPart() {
@@ -644,7 +695,7 @@ Voice::Voice(
 			lt_duration,
 			{ .text = Ui::FormatDurationText(duration()) },
 			Ui::Text::WithEntities));
-	_details.setLink(1, goToMessageClickHandler(parent));
+	_details.setLink(1, JumpToMessageClickHandler(parent));
 }
 
 void Voice::initDimensions() {
@@ -944,7 +995,9 @@ Document::Document(
 	const style::OverviewFileLayout &st)
 : RadialProgressItem(delegate, parent)
 , _data(fields.document)
-, _msgl(parent->isHistoryEntry() ? goToMessageClickHandler(parent) : nullptr)
+, _msgl(parent->isHistoryEntry()
+	? JumpToMessageClickHandler(parent)
+	: nullptr)
 , _namel(std::make_shared<DocumentOpenClickHandler>(
 	_data,
 	crl::guard(this, [=](FullMsgId id) {
@@ -1132,9 +1185,10 @@ void Document::paint(Painter &p, const QRect &clip, TextSelection selection, con
 				if (thumbnail || blurred) {
 					if (_thumb.isNull() || (thumbnail && !_thumbLoaded)) {
 						_thumbLoaded = (thumbnail != nullptr);
-						const auto options = _thumbLoaded
-							? Images::Option()
-							: Images::Option::Blur;
+						const auto options = Images::Option::RoundSmall
+							| (_thumbLoaded
+								? Images::Option()
+								: Images::Option::Blur);
 						const auto image = thumbnail ? thumbnail : blurred;
 						_thumb = image->pixNoCache(
 							_thumbw * style::DevicePixelRatio(),
@@ -1147,10 +1201,20 @@ void Document::paint(Painter &p, const QRect &clip, TextSelection selection, con
 					}
 					p.drawPixmap(rthumb.topLeft(), _thumb);
 				} else {
-					p.fillRect(rthumb, st::overviewFileThumbBg);
+					p.setPen(Qt::NoPen);
+					p.setBrush(st::overviewFileThumbBg);
+					p.drawRoundedRect(
+						rthumb,
+						st::roundRadiusSmall,
+						st::roundRadiusSmall);
 				}
 			} else {
-				p.fillRect(rthumb, _generic.color);
+				p.setPen(Qt::NoPen);
+				p.setBrush(_generic.color);
+				p.drawRoundedRect(
+					rthumb,
+					st::roundRadiusSmall,
+					st::roundRadiusSmall);
 				if (!radial && loaded && !_ext.isEmpty()) {
 					p.setFont(st::overviewFileExtFont);
 					p.setPen(st::overviewFileExtFg);
@@ -1158,7 +1222,12 @@ void Document::paint(Painter &p, const QRect &clip, TextSelection selection, con
 				}
 			}
 			if (selected) {
-				p.fillRect(rthumb, st::defaultTextPalette.selectOverlay);
+				p.setPen(Qt::NoPen);
+				p.setBrush(st::defaultTextPalette.selectOverlay);
+				p.drawRoundedRect(
+					rthumb,
+					st::roundRadiusSmall,
+					st::roundRadiusSmall);
 			}
 
 			if (radial || (!loaded && !_data->loading())) {
@@ -1482,7 +1551,8 @@ Link::Link(
 	not_null<Delegate*> delegate,
 	not_null<HistoryItem*> parent,
 	Data::Media *media)
-: ItemBase(delegate, parent) {
+: ItemBase(delegate, parent)
+, _text(st::msgMinWidth) {
 	AddComponents(Info::Bit());
 
 	auto textWithEntities = parent->originalText();
@@ -1514,7 +1584,7 @@ Link::Link(
 		}
 		int32 afterLinkStart = entity.offset() + entity.length();
 		if (till > afterLinkStart) {
-			if (!QRegularExpression(qsl("^[,.\\s_=+\\-;:`'\"\\(\\)\\[\\]\\{\\}<>*&^%\\$#@!\\\\/]+$")).match(text.mid(afterLinkStart, till - afterLinkStart)).hasMatch()) {
+			if (!QRegularExpression(u"^[,.\\s_=+\\-;:`'\"\\(\\)\\[\\]\\{\\}<>*&^%\\$#@!\\\\/]+$"_q).match(text.mid(afterLinkStart, till - afterLinkStart)).hasMatch()) {
 				++lnk;
 				break;
 			}
@@ -1522,7 +1592,7 @@ Link::Link(
 		till = entity.offset();
 	}
 	if (!lnk) {
-		if (QRegularExpression(qsl("^[,.\\s\\-;:`'\"\\(\\)\\[\\]\\{\\}<>*&^%\\$#@!\\\\/]+$")).match(text.mid(from, till - from)).hasMatch()) {
+		if (QRegularExpression(u"^[,.\\s\\-;:`'\"\\(\\)\\[\\]\\{\\}<>*&^%\\$#@!\\\\/]+$"_q).match(text.mid(from, till - from)).hasMatch()) {
 			till = from;
 		}
 	}
@@ -1543,11 +1613,13 @@ Link::Link(
 				}),
 				parent->fullId());
 		} else if (_page->photo) {
-			if (_page->type == WebPageType::Profile || _page->type == WebPageType::Video) {
+			if (_page->type == WebPageType::Profile
+				|| _page->type == WebPageType::Video) {
 				_photol = createHandler(_page->url);
 			} else if (_page->type == WebPageType::Photo
-				|| _page->siteName == qstr("Twitter")
-				|| _page->siteName == qstr("Facebook")) {
+				|| _page->type == WebPageType::Document
+				|| _page->siteName == u"Twitter"_q
+				|| _page->siteName == u"Facebook"_q) {
 				_photol = std::make_shared<PhotoOpenClickHandler>(
 					_page->photo,
 					crl::guard(this, [=](FullMsgId id) {
@@ -2040,7 +2112,7 @@ void Gif::paint(
 		const auto pixmap = _gif->current({
 			.frame = frame,
 			.outer = r.size(),
-		}, /*context->paused ? 0 : */context->ms);
+		}, context->paused ? 0 : context->ms);
 		if (_thumb.isNull()) {
 			_thumb = pixmap;
 			_thumbGood = true;

@@ -9,7 +9,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/variant.h"
 #include "api/api_common.h"
-#include "ui/chat/attach/attach_prepare.h"
+
+namespace Ui {
+struct PreparedFileInformation;
+} // namespace Ui
 
 namespace Main {
 class Session;
@@ -20,6 +23,10 @@ constexpr auto kFileSizeLimit = 2'000 * int64(1024 * 1024);
 
 // Load files up to 4'000 MB.
 constexpr auto kFileSizePremiumLimit = 4'000 * int64(1024 * 1024);
+
+extern const char kOptionSendLargePhotos[];
+
+[[nodiscard]] int PhotoSideLimit();
 
 enum class SendMediaType {
 	Photo,
@@ -200,15 +207,18 @@ struct FileLoadTo {
 		PeerId peer,
 		Api::SendOptions options,
 		MsgId replyTo,
+		MsgId topicRootId,
 		MsgId replaceMediaOf)
 	: peer(peer)
 	, options(options)
 	, replyTo(replyTo)
+	, topicRootId(topicRootId)
 	, replaceMediaOf(replaceMediaOf) {
 	}
 	PeerId peer;
 	Api::SendOptions options;
 	MsgId replyTo;
+	MsgId topicRootId;
 	MsgId replaceMediaOf;
 };
 
@@ -218,6 +228,7 @@ struct FileLoadResult {
 		uint64 id,
 		const FileLoadTo &to,
 		const TextWithTags &caption,
+		bool spoiler,
 		std::shared_ptr<SendingAlbum> album);
 
 	TaskId taskId;
@@ -250,6 +261,7 @@ struct FileLoadResult {
 
 	PreparedPhotoThumbs photoThumbs;
 	TextWithTags caption;
+	bool spoiler = false;
 
 	std::vector<MTPInputDocument> attachedStickers;
 
@@ -279,6 +291,7 @@ public:
 		SendMediaType type,
 		const FileLoadTo &to,
 		const TextWithTags &caption,
+		bool spoiler,
 		std::shared_ptr<SendingAlbum> album = nullptr);
 	FileLoadTask(
 		not_null<Main::Session*> session,
@@ -337,6 +350,7 @@ private:
 	VoiceWaveform _waveform;
 	SendMediaType _type;
 	TextWithTags _caption;
+	bool _spoiler = false;
 
 	std::shared_ptr<FileLoadResult> _result;
 

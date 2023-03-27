@@ -53,6 +53,10 @@ DocumentClickHandler::DocumentClickHandler(
 		reinterpret_cast<qulonglong>(_document.get()));
 }
 
+QString DocumentClickHandler::tooltip() const {
+	return property(kDocumentFilenameTooltipProperty).value<QString>();
+}
+
 DocumentOpenClickHandler::DocumentOpenClickHandler(
 	not_null<DocumentData*> document,
 	Fn<void(FullMsgId)> &&callback,
@@ -148,7 +152,7 @@ void DocumentOpenWithClickHandler::Open(
 	data->saveFromDataSilent();
 	const auto path = data->filepath(true);
 	if (!path.isEmpty()) {
-		File::OpenWith(path, QCursor::pos());
+		File::OpenWith(path);
 	} else {
 		DocumentSaveClickHandler::Save(
 			origin,

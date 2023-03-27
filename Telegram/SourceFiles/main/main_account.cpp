@@ -170,7 +170,8 @@ void Account::createSession(
 			MTPVector<MTPRestrictionReason>(),
 			MTPstring(), // bot_inline_placeholder
 			MTPstring(), // lang_code
-			MTPEmojiStatus()),
+			MTPEmojiStatus(),
+			MTPVector<MTPUsername>()),
 		serialized,
 		streamVersion,
 		std::move(settings));
@@ -598,6 +599,16 @@ void Account::destroyStaleAuthorizationKeys() {
 			resetAuthorizationKeys();
 			return;
 		}
+	}
+}
+
+void Account::setHandleLoginCode(Fn<void(QString)> callback) {
+	_handleLoginCode = std::move(callback);
+}
+
+void Account::handleLoginCode(const QString &code) const {
+	if (_handleLoginCode) {
+		_handleLoginCode(code);
 	}
 }
 

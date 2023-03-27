@@ -33,7 +33,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "mainwindow.h"
 #include "apiwrap.h" // ApiWrap::acceptTerms.
-#include "facades.h"
 #include "styles/style_layers.h"
 
 #include <QtGui/QWindow>
@@ -42,6 +41,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace Window {
 
 Controller::Controller() : Controller(CreateArgs{}) {
+}
+
+Controller::Controller(not_null<Main::Account*> account)
+: Controller(CreateArgs{}) {
+	showAccount(account);
 }
 
 Controller::Controller(
@@ -63,6 +67,9 @@ Controller::~Controller() {
 	// We want to delete all widgets before the _sessionController.
 	_widget.ui_hideSettingsAndLayer(anim::type::instant);
 	_widget.clearWidgets();
+	_accountLifetime.destroy();
+	_sessionControllerValue = nullptr;
+	_sessionController = nullptr;
 }
 
 void Controller::showAccount(not_null<Main::Account*> account) {
@@ -79,6 +86,7 @@ void Controller::showAccount(
 		: 0;
 	_accountLifetime.destroy();
 	_account = account;
+	Core::App().checkWindowAccount(this);
 
 	const auto updateOnlineOfPrevSesssion = crl::guard(_account, [=] {
 		if (!prevSessionUniqueId) {
@@ -104,16 +112,19 @@ void Controller::showAccount(
 		_sessionController = session
 			? std::make_unique<SessionController>(session, this)
 			: nullptr;
-		setupSideBar();
+		_sessionControllerValue = _sessionController.get();
+
+		auto oldContentCache = _widget.grabForSlideAnimation();
 		_widget.updateWindowIcon();
 		if (session) {
-			setupMain(singlePeerShowAtMsgId);
+			setupSideBar();
+			setupMain(singlePeerShowAtMsgId, std::move(oldContentCache));
 
 			session->updates().isIdleValue(
 			) | rpl::filter([=](bool idle) {
 				return !idle;
 			}) | rpl::start_with_next([=] {
-				widget()->checkHistoryActivation();
+				widget()->checkActivation();
 			}, _sessionController->lifetime());
 
 			session->termsLockValue(
@@ -124,9 +135,16 @@ void Controller::showAccount(
 
 			widget()->setInnerFocus();
 
+			_sessionController->activeChatChanges(
+			) | rpl::start_with_next([=] {
+				_widget.updateTitle();
+			}, _sessionController->lifetime());
+			_widget.updateTitle();
+
 			session->updates().updateOnline(crl::now());
 		} else {
-			setupIntro();
+			sideBarChanged();
+			setupIntro(std::move(oldContentCache));
 			_widget.updateGlobalMenu();
 		}
 
@@ -139,11 +157,9 @@ PeerData *Controller::singlePeer() const {
 }
 
 void Controller::setupSideBar() {
+	Expects(_sessionController != nullptr);
+
 	if (!isPrimary()) {
-		return;
-	}
-	if (!_sessionController) {
-		sideBarChanged();
 		return;
 	}
 	_sessionController->filtersMenuChanged(
@@ -255,6 +271,16 @@ Main::Session *Controller::maybeSession() const {
 	return _account ? _account->maybeSession() : nullptr;
 }
 
+auto Controller::sessionControllerValue() const
+-> rpl::producer<SessionController*> {
+	return _sessionControllerValue.value();
+}
+
+auto Controller::sessionControllerChanges() const
+-> rpl::producer<SessionController*> {
+	return _sessionControllerValue.changes();
+}
+
 bool Controller::locked() const {
 	if (Core::App().passcodeLocked()) {
 		return true;
@@ -284,16 +310,19 @@ void Controller::clearPasscodeLock() {
 	}
 }
 
-void Controller::setupIntro() {
-	_widget.setupIntro(Core::App().domain().maybeLastOrSomeAuthedAccount()
+void Controller::setupIntro(QPixmap oldContentCache) {
+	const auto point = Core::App().domain().maybeLastOrSomeAuthedAccount()
 		? Intro::EnterPoint::Qr
-		: Intro::EnterPoint::Start);
+		: Intro::EnterPoint::Start;
+	_widget.setupIntro(point, std::move(oldContentCache));
 }
 
-void Controller::setupMain(MsgId singlePeerShowAtMsgId) {
+void Controller::setupMain(
+		MsgId singlePeerShowAtMsgId,
+		QPixmap oldContentCache) {
 	Expects(_sessionController != nullptr);
 
-	_widget.setupMain(singlePeerShowAtMsgId);
+	_widget.setupMain(singlePeerShowAtMsgId, std::move(oldContentCache));
 
 	if (const auto id = Ui::Emoji::NeedToSwitchBackToId()) {
 		Ui::Emoji::LoadAndSwitchTo(&_sessionController->session(), id);
@@ -340,6 +369,10 @@ void Controller::hideLayer(anim::type animated) {
 
 void Controller::hideSettingsAndLayer(anim::type animated) {
 	_widget.ui_hideSettingsAndLayer(animated);
+}
+
+bool Controller::isLayerShown() const {
+	return _widget.ui_isLayerShown();
 }
 
 void Controller::sideBarChanged() {
@@ -446,6 +479,40 @@ void Controller::openInMediaView(Media::View::OpenRequest &&request) {
 auto Controller::openInMediaViewRequests() const
 -> rpl::producer<Media::View::OpenRequest> {
 	return _openInMediaViewRequests.events();
+}
+
+void Controller::setDefaultFloatPlayerDelegate(
+		not_null<Media::Player::FloatDelegate*> delegate) {
+	_defaultFloatPlayerDelegate = delegate;
+	_replacementFloatPlayerDelegate = nullptr;
+	_floatPlayerDelegate = delegate;
+}
+
+void Controller::replaceFloatPlayerDelegate(
+		not_null<Media::Player::FloatDelegate*> replacement) {
+	Expects(_defaultFloatPlayerDelegate != nullptr);
+
+	_replacementFloatPlayerDelegate = replacement;
+	_floatPlayerDelegate = replacement;
+}
+
+void Controller::restoreFloatPlayerDelegate(
+		not_null<Media::Player::FloatDelegate*> replacement) {
+	Expects(_defaultFloatPlayerDelegate != nullptr);
+
+	if (_replacementFloatPlayerDelegate == replacement) {
+		_replacementFloatPlayerDelegate = nullptr;
+		_floatPlayerDelegate = _defaultFloatPlayerDelegate;
+	}
+}
+
+auto Controller::floatPlayerDelegate() const -> FloatDelegate* {
+	return _floatPlayerDelegate.current();
+}
+
+auto Controller::floatPlayerDelegateValue() const
+-> rpl::producer<FloatDelegate*> {
+	return _floatPlayerDelegate.value();
 }
 
 rpl::lifetime &Controller::lifetime() {

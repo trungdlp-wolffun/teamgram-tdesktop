@@ -35,8 +35,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-constexpr auto kFullArcLength = 360 * 16;
-
 enum class Color {
 	Permanent,
 	Expiring,
@@ -91,7 +89,8 @@ public:
 
 	QString generateName() override;
 	QString generateShortName() override;
-	PaintRoundImageCallback generatePaintUserpicCallback() override;
+	PaintRoundImageCallback generatePaintUserpicCallback(
+		bool forceRound) override;
 
 	QSize rightActionSize() const override;
 	QMargins rightActionMargins() const override;
@@ -200,7 +199,7 @@ private:
 				left / 86400));
 		} else {
 			const auto time = base::unixtime::parse(link.expireDate).time();
-			add(QLocale::system().toString(time, QLocale::LongFormat));
+			add(QLocale().toString(time, QLocale::LongFormat));
 		}
 	}
 	return result;
@@ -312,7 +311,7 @@ QString Row::generateName() {
 	}
 	auto result = _data.link;
 	return result.replace(
-		qstr("https://"),
+		u"https://"_q,
 		QString()
 	).replace(
 		qstr("teamgram.me/+"),
@@ -327,7 +326,7 @@ QString Row::generateShortName() {
 	return generateName();
 }
 
-PaintRoundImageCallback Row::generatePaintUserpicCallback() {
+PaintRoundImageCallback Row::generatePaintUserpicCallback(bool forceRound) {
 	return [=](
 			QPainter &p,
 			int x,
@@ -739,7 +738,7 @@ void LinksController::rowPaintIcon(
 			margins,
 			margins,
 			margins,
-		}), (kFullArcLength / 4), kFullArcLength * (1. - progress));
+		}), arc::kQuarterLength, arc::kFullLength * (1. - progress));
 	}
 }
 

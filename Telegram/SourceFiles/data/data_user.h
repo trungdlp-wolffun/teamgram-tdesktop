@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "data/data_peer.h"
 #include "data/data_chat_participant_status.h"
+#include "data/data_user_names.h"
 #include "dialogs/dialogs_key.h"
 
 namespace Data {
@@ -16,14 +17,20 @@ struct BotCommand;
 } // namespace Data
 
 struct BotInfo {
+	BotInfo();
+
 	bool inited = false;
 	bool readsAllHistory = false;
 	bool cantJoinGroups = false;
 	bool supportsAttachMenu = false;
 	int version = 0;
-	QString description, inlinePlaceholder;
+	int descriptionVersion = 0;
+	QString description;
+	QString inlinePlaceholder;
 	std::vector<Data::BotCommand> commands;
-	Ui::Text::String text = { int(st::msgMinWidth) }; // description
+
+	PhotoData *photo = nullptr;
+	DocumentData *document = nullptr;
 
 	QString botMenuButtonText;
 	QString botMenuButtonUrl;
@@ -53,11 +60,12 @@ enum class UserDataFlag {
 	Premium = (1 << 14),
 	CanReceiveGifts = (1 << 15),
 	VoiceMessagesForbidden = (1 << 16),
+	PersonalPhoto = (1 << 17),
 };
 inline constexpr bool is_flag_type(UserDataFlag) { return true; };
 using UserDataFlags = base::flags<UserDataFlag>;
 
-class UserData : public PeerData {
+class UserData final : public PeerData {
 public:
 	using Flag = UserDataFlag;
 	using Flags = Data::Flags<UserDataFlags>;
@@ -71,10 +79,12 @@ public:
 		const QString &newLastName,
 		const QString &newPhoneName,
 		const QString &newUsername);
+	void setUsernames(const Data::Usernames &newUsernames);
 
 	void setEmojiStatus(DocumentId emojiStatusId, TimeId until = 0);
 	[[nodiscard]] DocumentId emojiStatusId() const;
 
+	void setUsername(const QString &username);
 	void setPhone(const QString &newPhone);
 	void setBotInfoVersion(int version);
 	void setBotInfo(const MTPBotInfo &info);
@@ -106,14 +116,13 @@ public:
 	[[nodiscard]] bool isBot() const;
 	[[nodiscard]] bool isSupport() const;
 	[[nodiscard]] bool isInaccessible() const;
-	[[nodiscard]] bool canWrite() const;
 	[[nodiscard]] bool applyMinPhoto() const;
+	[[nodiscard]] bool hasPersonalPhoto() const;
 
 	[[nodiscard]] bool canShareThisContact() const;
 	[[nodiscard]] bool canAddContact() const;
 
 	[[nodiscard]] bool canReceiveGifts() const;
-	[[nodiscard]] bool canReceiveVoices() const;
 
 	// In Data::Session::processUsers() we check only that.
 	// When actually trying to share contact we perform
@@ -124,8 +133,10 @@ public:
 
 	QString firstName;
 	QString lastName;
-	QString username;
 	[[nodiscard]] const QString &phone() const;
+	[[nodiscard]] QString username() const;
+	[[nodiscard]] QString editableUsername() const;
+	[[nodiscard]] const std::vector<QString> &usernames() const;
 	QString nameOrPhone;
 	TimeId onlineTill = 0;
 
@@ -161,6 +172,8 @@ private:
 		-> const std::vector<Data::UnavailableReason> & override;
 
 	Flags _flags;
+
+	Data::UsernamesInfo _username;
 
 	std::vector<Data::UnavailableReason> _unavailableReasons;
 	QString _phone;

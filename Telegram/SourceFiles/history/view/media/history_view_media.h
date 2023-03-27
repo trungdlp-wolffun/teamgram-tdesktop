@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "history/view/history_view_object.h"
+#include "ui/chat/message_bubble.h"
 #include "ui/rect_part.h"
 
 class History;
@@ -31,7 +32,12 @@ struct ColorReplacements;
 namespace Ui {
 struct BubbleSelectionInterval;
 struct ChatPaintContext;
+class SpoilerAnimation;
 } // namespace Ui
+
+namespace Images {
+struct CornersMaskRef;
+} // namespace Images
 
 namespace HistoryView {
 
@@ -40,12 +46,13 @@ enum class CursorState : char;
 enum class InfoDisplayType : char;
 struct TextState;
 struct StateRequest;
+struct MediaSpoiler;
 class StickerPlayer;
 class Element;
 
 using PaintContext = Ui::ChatPaintContext;
 
-enum class MediaInBubbleState {
+enum class MediaInBubbleState : uchar {
 	None,
 	Top,
 	Middle,
@@ -69,11 +76,12 @@ enum class MediaInBubbleState {
 	TimeId duration,
 	const QString &base);
 
-class Media : public Object {
+class Media : public Object, public base::has_weak_ptr {
 public:
 	explicit Media(not_null<Element*> parent) : _parent(parent) {
 	}
 
+	[[nodiscard]] not_null<Element*> parent() const;
 	[[nodiscard]] not_null<History*> history() const;
 
 	[[nodiscard]] virtual TextForMimeData selectedText(
@@ -184,7 +192,7 @@ public:
 			const PaintContext &context,
 			const QRect &geometry,
 			RectParts sides,
-			RectParts corners,
+			Ui::BubbleRounding rounding,
 			float64 highlightOpacity,
 			not_null<uint64*> cacheKey,
 			not_null<QPixmap*> cache) const {
@@ -203,7 +211,12 @@ public:
 	[[nodiscard]] virtual TextWithEntities getCaption() const {
 		return TextWithEntities();
 	}
+	virtual void hideSpoilers() {
+	}
 	[[nodiscard]] virtual bool needsBubble() const = 0;
+	[[nodiscard]] virtual bool unwrapped() const {
+		return false;
+	}
 	[[nodiscard]] virtual bool customInfoLayout() const = 0;
 	[[nodiscard]] virtual QRect contentRectForReactions() const {
 		return QRect(0, 0, width(), height());
@@ -239,6 +252,16 @@ public:
 	[[nodiscard]] MediaInBubbleState inBubbleState() const {
 		return _inBubbleState;
 	}
+	void setBubbleRounding(Ui::BubbleRounding rounding) {
+		_bubbleRounding = rounding;
+	}
+	[[nodiscard]] Ui::BubbleRounding bubbleRounding() const {
+		return _bubbleRounding;
+	}
+	[[nodiscard]] Ui::BubbleRounding adjustedBubbleRounding(
+		RectParts square = {}) const;
+	[[nodiscard]] Ui::BubbleRounding adjustedBubbleRoundingWithCaption(
+		const Ui::Text::String &caption) const;
 	[[nodiscard]] bool isBubbleTop() const {
 		return (_inBubbleState == MediaInBubbleState::Top)
 			|| (_inBubbleState == MediaInBubbleState::None);
@@ -314,11 +337,32 @@ protected:
 
 	[[nodiscard]] bool usesBubblePattern(const PaintContext &context) const;
 
+	void fillImageShadow(
+		QPainter &p,
+		QRect rect,
+		Ui::BubbleRounding rounding,
+		const PaintContext &context) const;
+	void fillImageOverlay(
+		QPainter &p,
+		QRect rect,
+		std::optional<Ui::BubbleRounding> rounding, // nullopt if in WebPage.
+		const PaintContext &context) const;
+	void fillImageSpoiler(
+		QPainter &p,
+		not_null<MediaSpoiler*> spoiler,
+		QRect rect,
+		const PaintContext &context) const;
+	void createSpoilerLink(not_null<MediaSpoiler*> spoiler);
+
 	void repaint() const;
 
 	const not_null<Element*> _parent;
 	MediaInBubbleState _inBubbleState = MediaInBubbleState::None;
+	Ui::BubbleRounding _bubbleRounding;
 
 };
+
+[[nodiscard]] Images::CornersMaskRef MediaRoundingMask(
+	std::optional<Ui::BubbleRounding> rounding);
 
 } // namespace HistoryView

@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/image/image_prepare.h"
 #include "ui/chat/chat_style.h"
 #include "ui/painter.h"
+#include "ui/power_saving.h"
 #include "data/data_session.h"
 #include "payments/payments_checkout_process.h"
 #include "window/window_session_controller.h"
@@ -54,7 +55,7 @@ ExtendedPreview::ExtendedPreview(
 , _caption(st::minPhotoSize - st::msgPadding.left() - st::msgPadding.right()) {
 	const auto item = parent->data();
 	_caption = createCaption(item);
-	_link = MakeInvoiceLink(item);
+	_spoiler.link = MakeInvoiceLink(item);
 	resolveButtonText();
 }
 
@@ -90,22 +91,22 @@ void ExtendedPreview::ensureThumbnailRead() const {
 	}
 	_inlineThumbnail = Images::FromInlineBytes(bytes);
 	if (_inlineThumbnail.isNull()) {
-		_imageCacheInvalid = 1;
+		_imageCacheInvalid = true;
 	} else {
 		history()->owner().registerHeavyViewPart(_parent);
 	}
 }
 
 bool ExtendedPreview::hasHeavyPart() const {
-	return _animation || !_inlineThumbnail.isNull();
+	return _spoiler.animation || !_inlineThumbnail.isNull();
 }
 
 void ExtendedPreview::unloadHeavyPart() {
 	_inlineThumbnail
-		= _imageCache
-		= _cornerCache
+		= _spoiler.background
+		= _spoiler.cornerCache
 		= _buttonBackground = QImage();
-	_animation = nullptr;
+	_spoiler.animation = nullptr;
 	_caption.unloadPersistentAnimation();
 }
 
@@ -195,13 +196,15 @@ int ExtendedPreview::minWidthForButton() const {
 void ExtendedPreview::draw(Painter &p, const PaintContext &context) const {
 	if (width() < st::msgPadding.left() + st::msgPadding.right() + 1) return;
 
-	const auto st = context.st;
-	const auto sti = context.imageStyle();
 	const auto stm = context.messageStyle();
 	auto paintx = 0, painty = 0, paintw = width(), painth = height();
 	auto bubble = _parent->hasBubble();
 	auto captionw = paintw - st::msgPadding.left() - st::msgPadding.right();
 	auto rthumb = style::rtlrect(paintx, painty, paintw, painth, width());
+	const auto inWebPage = (_parent->media() != this);
+	const auto rounding = inWebPage
+		? std::optional<Ui::BubbleRounding>()
+		: adjustedBubbleRoundingWithCaption(_caption);
 	if (bubble) {
 		if (!_caption.isEmpty()) {
 			painth -= st::mediaCaptionSkip + _caption.countHeight(captionw);
@@ -211,20 +214,15 @@ void ExtendedPreview::draw(Painter &p, const PaintContext &context) const {
 			rthumb = style::rtlrect(paintx, painty, paintw, painth, width());
 		}
 	} else {
-		Ui::FillRoundShadow(p, 0, 0, paintw, painth, sti->msgShadow, sti->msgShadowCorners);
+		Assert(rounding.has_value());
+		fillImageShadow(p, rthumb, *rounding, context);
 	}
-	const auto inWebPage = (_parent->media() != this);
-	const auto roundRadius = inWebPage
-		? ImageRoundRadius::Small
-		: ImageRoundRadius::Large;
-	const auto roundCorners = inWebPage ? RectPart::AllCorners : ((isBubbleTop() ? (RectPart::TopLeft | RectPart::TopRight) : RectPart::None)
-		| ((isRoundedInBubbleBottom() && _caption.isEmpty()) ? (RectPart::BottomLeft | RectPart::BottomRight) : RectPart::None));
-	validateImageCache(rthumb.size(), roundRadius, roundCorners);
-	p.drawImage(rthumb.topLeft(), _imageCache);
-	fillSpoilerMess(p, rthumb, roundRadius, roundCorners, context);
+	validateImageCache(rthumb.size(), rounding);
+	p.drawImage(rthumb.topLeft(), _spoiler.background);
+	fillImageSpoiler(p, &_spoiler, rthumb, context);
 	paintButton(p, rthumb, context);
 	if (context.selected()) {
-		Ui::FillComplexOverlayRect(p, st, rthumb, roundRadius, roundCorners);
+		fillImageOverlay(p, rthumb, rounding, context);
 	}
 
 	// date
@@ -239,7 +237,8 @@ void ExtendedPreview::draw(Painter &p, const PaintContext &context) const {
 			.palette = &stm->textPalette,
 			.spoiler = Ui::Text::DefaultSpoilerCache(),
 			.now = context.now,
-			.paused = context.paused,
+			.pausedEmoji = context.paused || On(PowerSaving::kEmojiChat),
+			.pausedSpoiler = context.paused || On(PowerSaving::kChatSpoiler),
 			.selection = context.selection,
 		});
 	} else if (!inWebPage) {
@@ -264,55 +263,21 @@ void ExtendedPreview::draw(Painter &p, const PaintContext &context) const {
 
 void ExtendedPreview::validateImageCache(
 		QSize outer,
-		ImageRoundRadius radius,
-		RectParts corners) const {
-	const auto intRadius = static_cast<int>(radius);
-	const auto intCorners = static_cast<int>(corners);
+		std::optional<Ui::BubbleRounding> rounding) const {
 	const auto ratio = style::DevicePixelRatio();
-	if (_imageCache.size() == (outer * ratio)
-		&& _imageCacheRoundRadius == intRadius
-		&& _imageCacheRoundCorners == intCorners) {
+	if (_spoiler.background.size() == (outer * ratio)
+		&& _spoiler.backgroundRounding == rounding) {
 		return;
 	}
-	_imageCache = prepareImageCache(outer, radius, corners);
-	_imageCacheRoundRadius = intRadius;
-	_imageCacheRoundCorners = intCorners;
-}
-
-QImage ExtendedPreview::prepareImageCache(
-		QSize outer,
-		ImageRoundRadius radius,
-		RectParts corners) const {
-	return Images::Round(prepareImageCache(outer), radius, corners);
+	_spoiler.background = Images::Round(
+		prepareImageCache(outer),
+		MediaRoundingMask(rounding));
+	_spoiler.backgroundRounding = rounding;
 }
 
 QImage ExtendedPreview::prepareImageCache(QSize outer) const {
 	ensureThumbnailRead();
 	return PrepareWithBlurredBackground(outer, {}, {}, _inlineThumbnail);
-}
-
-void ExtendedPreview::fillSpoilerMess(
-		QPainter &p,
-		QRect rect,
-		ImageRoundRadius radius,
-		RectParts corners,
-		const PaintContext &context) const {
-	if (!_animation) {
-		_animation = std::make_unique<Ui::SpoilerAnimation>([=] {
-			_parent->customEmojiRepaint();
-		});
-		history()->owner().registerHeavyViewPart(_parent);
-	}
-	_parent->clearCustomEmojiRepaint();
-	const auto &spoiler = Ui::DefaultImageSpoiler();
-	const auto index = _animation->index(context.now, context.paused);
-	Ui::FillSpoilerRect(
-		p,
-		rect,
-		radius,
-		corners,
-		spoiler.frame(index),
-		_cornerCache);
 }
 
 void ExtendedPreview::paintButton(
@@ -333,13 +298,14 @@ void ExtendedPreview::paintButton(
 	const auto size = QSize(width, height);
 	if (_buttonBackground.size() != size * ratio
 		|| _buttonBackgroundOverlay != overlay) {
-		if (_imageCache.width() < width * ratio
-			|| _imageCache.height() < height * ratio) {
+		auto &background = _spoiler.background;
+		if (background.width() < width * ratio
+			|| background.height() < height * ratio) {
 			return;
 		}
-		_buttonBackground = _imageCache.copy(QRect(
-			(_imageCache.width() - width * ratio) / 2,
-			(_imageCache.height() - height * ratio) / 2,
+		_buttonBackground = background.copy(QRect(
+			(background.width() - width * ratio) / 2,
+			(background.height() - height * ratio) / 2,
 			width * ratio,
 			height * ratio));
 		_buttonBackground.setDevicePixelRatio(ratio);
@@ -389,7 +355,7 @@ TextState ExtendedPreview::textState(QPoint point, StateRequest request) const {
 		painth -= st::mediaCaptionSkip;
 	}
 	if (QRect(paintx, painty, paintw, painth).contains(point)) {
-		result.link = _link;
+		result.link = _spoiler.link;
 	}
 	if (_caption.isEmpty() && _parent->media() == this) {
 		auto fullRight = paintx + paintw;
@@ -400,14 +366,16 @@ TextState ExtendedPreview::textState(QPoint point, StateRequest request) const {
 			point,
 			InfoDisplayType::Image);
 		if (bottomInfoResult.link
-			|| bottomInfoResult.cursor != CursorState::None) {
+			|| bottomInfoResult.cursor != CursorState::None
+			|| bottomInfoResult.customTooltip) {
 			return bottomInfoResult;
 		}
 		if (const auto size = bubble ? std::nullopt : _parent->rightActionSize()) {
 			auto fastShareLeft = (fullRight + st::historyFastShareLeft);
 			auto fastShareTop = (fullBottom - st::historyFastShareBottom - size->height());
 			if (QRect(fastShareLeft, fastShareTop, size->width(), size->height()).contains(point)) {
-				result.link = _parent->rightActionLink();
+				result.link = _parent->rightActionLink(point
+					- QPoint(fastShareLeft, fastShareTop));
 			}
 		}
 	}
@@ -415,11 +383,11 @@ TextState ExtendedPreview::textState(QPoint point, StateRequest request) const {
 }
 
 bool ExtendedPreview::toggleSelectionByHandlerClick(const ClickHandlerPtr &p) const {
-	return p == _link;
+	return p == _spoiler.link;
 }
 
 bool ExtendedPreview::dragItemByHandler(const ClickHandlerPtr &p) const {
-	return p == _link;
+	return p == _spoiler.link;
 }
 
 bool ExtendedPreview::needInfoDisplay() const {
@@ -433,6 +401,10 @@ TextForMimeData ExtendedPreview::selectedText(TextSelection selection) const {
 	return _caption.toTextForMimeData(selection);
 }
 
+void ExtendedPreview::hideSpoilers() {
+	_caption.setSpoilerRevealed(false, anim::type::instant);
+}
+
 bool ExtendedPreview::needsBubble() const {
 	if (!_caption.isEmpty()) {
 		return true;
@@ -444,7 +416,8 @@ bool ExtendedPreview::needsBubble() const {
 			|| item->viaBot()
 			|| _parent->displayedReply()
 			|| _parent->displayForwardedFrom()
-			|| _parent->displayFromName());
+			|| _parent->displayFromName()
+			|| _parent->displayedTopicButton());
 }
 
 QPoint ExtendedPreview::resolveCustomInfoRightBottom() const {

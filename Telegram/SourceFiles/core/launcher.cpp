@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "platform/platform_launcher.h"
 #include "platform/platform_specific.h"
+#include "base/options.h"
 #include "base/platform/base_platform_info.h"
 #include "base/platform/base_platform_file_utilities.h"
 #include "ui/main_queue_processor.h"
@@ -24,6 +25,14 @@ namespace Core {
 namespace {
 
 uint64 InstallationTag = 0;
+
+base::options::toggle OptionFreeType({
+	.id = kOptionFreeType,
+	.name = "FreeType font engine",
+	.description = "Use the font engine from Linux instead of the system one.",
+	.scope = base::options::windows | base::options::macos,
+	.restartRequired = true,
+});
 
 class FilteredCommandLineArguments {
 public:
@@ -52,7 +61,7 @@ FilteredCommandLineArguments::FilteredCommandLineArguments(
 	}
 
 #if defined Q_OS_WIN || defined Q_OS_MAC
-	if (cUseFreeType()) {
+	if (OptionFreeType.value()) {
 		pushArgument("-platform");
 #ifdef Q_OS_WIN
 		pushArgument("windows:fontengine=freetype");
@@ -61,7 +70,7 @@ FilteredCommandLineArguments::FilteredCommandLineArguments(
 #endif // !Q_OS_WIN
 	}
 #elif defined Q_OS_UNIX
-	if (QFile::exists(cWorkingDir() + qsl("tdata/nowayland"))
+	if (QFile::exists(cWorkingDir() + u"tdata/nowayland"_q)
 		&& qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
 		LOG(("Wayland: Disable on old installations"));
 		pushArgument("-platform");
@@ -87,7 +96,7 @@ void FilteredCommandLineArguments::pushArgument(const char *text) {
 }
 
 QString DebugModeSettingPath() {
-	return cWorkingDir() + qsl("tdata/withdebug");
+	return cWorkingDir() + u"tdata/withdebug"_q;
 }
 
 void WriteDebugModeSetting() {
@@ -113,7 +122,7 @@ void ComputeDebugMode() {
 }
 
 void ComputeExternalUpdater() {
-	QFile file(qsl("/etc/tdesktop/externalupdater"));
+	QFile file(u"/etc/tdesktop/externalupdater"_q);
 
 	if (file.exists() && file.open(QIODevice::ReadOnly)) {
 		QTextStream fileStream(&file);
@@ -128,14 +137,8 @@ void ComputeExternalUpdater() {
 	}
 }
 
-void ComputeFreeType() {
-	if (QFile::exists(cWorkingDir() + qsl("tdata/withfreetype"))) {
-		cSetUseFreeType(true);
-	}
-}
-
 QString InstallBetaVersionsSettingPath() {
-	return cWorkingDir() + qsl("tdata/devversion");
+	return cWorkingDir() + u"tdata/devversion"_q;
 }
 
 void WriteInstallBetaVersionsSetting() {
@@ -161,7 +164,7 @@ void ComputeInstallBetaVersions() {
 
 void ComputeInstallationTag() {
 	InstallationTag = 0;
-	auto file = QFile(cWorkingDir() + qsl("tdata/usertag"));
+	auto file = QFile(cWorkingDir() + u"tdata/usertag"_q);
 	if (file.open(QIODevice::ReadOnly)) {
 		const auto result = file.read(
 			reinterpret_cast<char*>(&InstallationTag),
@@ -189,7 +192,7 @@ void ComputeInstallationTag() {
 
 bool MoveLegacyAlphaFolder(const QString &folder, const QString &file) {
 	const auto was = cExeDir() + folder;
-	const auto now = cExeDir() + qsl("TeamgramForcePortable");
+	const auto now = cExeDir() + u"TeamgramForcePortable"_q;
 	if (QDir(was).exists() && !QDir(now).exists()) {
 		const auto oldFile = was + "/tdata/" + file;
 		const auto newFile = was + "/tdata/alpha";
@@ -210,8 +213,8 @@ bool MoveLegacyAlphaFolder(const QString &folder, const QString &file) {
 }
 
 bool MoveLegacyAlphaFolder() {
-	if (!MoveLegacyAlphaFolder(qsl("TeamgramAlpha_data"), qsl("alpha"))
-		|| !MoveLegacyAlphaFolder(qsl("TeamgramBeta_data"), qsl("beta"))) {
+	if (!MoveLegacyAlphaFolder(u"TeamgramAlpha_data"_q, u"alpha"_q)
+		|| !MoveLegacyAlphaFolder(u"TeamgramBeta_data"_q, u"beta"_q)) {
 		return false;
 	}
 	return true;
@@ -222,13 +225,13 @@ bool CheckPortableVersionFolder() {
 		return false;
 	}
 
-	const auto portable = cExeDir() + qsl("TeamgramForcePortable");
-	QFile key(portable + qsl("/tdata/alpha"));
+	const auto portable = cExeDir() + u"TeamgramForcePortable"_q;
+	QFile key(portable + u"/tdata/alpha"_q);
 	if (cAlphaVersion()) {
 		Assert(*AlphaPrivateKey != 0);
 
 		cForceWorkingDir(portable + '/');
-		QDir().mkpath(cWorkingDir() + qstr("tdata"));
+		QDir().mkpath(cWorkingDir() + u"tdata"_q);
 		cSetAlphaPrivateKey(QByteArray(AlphaPrivateKey));
 		if (!key.open(QIODevice::WriteOnly)) {
 			LOG(("FATAL: Could not open '%1' for writing private key!"
@@ -272,7 +275,18 @@ bool CheckPortableVersionFolder() {
 	return true;
 }
 
+base::options::toggle OptionFractionalScalingEnabled({
+	.id = kOptionFractionalScalingEnabled,
+	.name = "Enable precise High DPI scaling",
+	.description = "Follow system interface scale settings exactly.",
+	.scope = base::options::windows | base::options::linux,
+	.restartRequired = true,
+});
+
 } // namespace
+
+const char kOptionFractionalScalingEnabled[] = "fractional-scaling-enabled";
+const char kOptionFreeType[] = "freetype";
 
 std::unique_ptr<Launcher> Launcher::Create(int argc, char *argv[]) {
 	return std::make_unique<Platform::Launcher>(argc, argv);
@@ -293,10 +307,7 @@ void Launcher::init() {
 	prepareSettings();
 	initQtMessageLogging();
 
-	QApplication::setApplicationName(qsl("TeamgramDesktop"));
-	QApplication::setAttribute(Qt::AA_DisableHighDpiScaling, true);
-	QApplication::setHighDpiScaleFactorRoundingPolicy(
-		Qt::HighDpiScaleFactorRoundingPolicy::Floor);
+	QApplication::setApplicationName(u"TeamgramDesktop"_q);
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 	// fallback session management is useless for tdesktop since it doesn't have
@@ -309,6 +320,24 @@ void Launcher::init() {
 #endif // Qt < 6.0.0
 
 	initHook();
+}
+
+void Launcher::initHighDpi() {
+#if QT_VERSION < QT_VERSION_CHECK(6, 2, 0)
+	qputenv("QT_DPI_ADJUSTMENT_POLICY", "AdjustDpi");
+#endif // Qt < 6.2.0
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+	QApplication::setAttribute(Qt::AA_EnableHighDpiScaling, true);
+#endif // Qt < 6.0.0
+
+	if (OptionFractionalScalingEnabled.value()) {
+		QApplication::setHighDpiScaleFactorRoundingPolicy(
+			Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+	} else {
+		QApplication::setHighDpiScaleFactorRoundingPolicy(
+			Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
+	}
 }
 
 int Launcher::exec() {
@@ -324,9 +353,12 @@ int Launcher::exec() {
 	Logs::start(this);
 	base::options::init(cWorkingDir() + "tdata/experimental_options.json");
 
+	// Must be called after options are inited.
+	initHighDpi();
+
 	if (Logs::DebugEnabled()) {
 		const auto openalLogPath = QDir::toNativeSeparators(
-			cWorkingDir() + qsl("DebugLogs/last_openal_log.txt"));
+			cWorkingDir() + u"DebugLogs/last_openal_log.txt"_q);
 
 		qputenv("ALSOFT_LOGLEVEL", "3");
 
@@ -350,7 +382,7 @@ int Launcher::exec() {
 	if (!UpdaterDisabled() && cRestartingUpdate()) {
 		DEBUG_LOG(("Sandbox Info: executing updater to install update."));
 		if (!launchUpdater(UpdaterLaunch::PerformUpdate)) {
-			base::Platform::DeleteDirectory(cWorkingDir() + qsl("tupdates/temp"));
+			base::Platform::DeleteDirectory(cWorkingDir() + u"tupdates/temp"_q);
 		}
 	} else if (cRestarting()) {
 		DEBUG_LOG(("Sandbox Info: executing Telegram because of restart."));
@@ -369,7 +401,6 @@ void Launcher::workingFolderReady() {
 
 	ComputeDebugMode();
 	ComputeExternalUpdater();
-	ComputeFreeType();
 	ComputeInstallBetaVersions();
 	ComputeInstallationTag();
 }
@@ -468,7 +499,6 @@ void Launcher::processArguments() {
 	};
 	auto parseMap = std::map<QByteArray, KeyFormat> {
 		{ "-debug"          , KeyFormat::NoValues },
-		{ "-freetype"       , KeyFormat::NoValues },
 		{ "-key"            , KeyFormat::OneValue },
 		{ "-autostart"      , KeyFormat::NoValues },
 		{ "-fixprevious"    , KeyFormat::NoValues },
@@ -505,7 +535,6 @@ void Launcher::processArguments() {
 		}
 	}
 
-	gUseFreeType = parseResult.contains("-freetype");
 	gDebugMode = parseResult.contains("-debug");
 	gKeyFile = parseResult.value("-key", {}).join(QString()).toLower();
 	gKeyFile = gKeyFile.replace(QRegularExpression("[^a-z0-9\\-_]"), {});
@@ -518,13 +547,9 @@ void Launcher::processArguments() {
 	gStartInTray = parseResult.contains("-startintray");
 	gQuit = parseResult.contains("-quit");
 	gSendPaths = parseResult.value("-sendpath", {});
-	gWorkingDir = parseResult.value("-workdir", {}).join(QString());
+	cForceWorkingDir(parseResult.value("-workdir", {}).join(QString()));
 	if (!gWorkingDir.isEmpty()) {
-		if (QDir().exists(gWorkingDir)) {
-			_customWorkingDir = true;
-		} else {
-			gWorkingDir = QString();
-		}
+		_customWorkingDir = true;
 	}
 	gStartUrl = parseResult.value("--", {}).join(QString());
 

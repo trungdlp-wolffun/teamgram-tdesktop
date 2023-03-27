@@ -29,14 +29,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "platform/platform_specific.h"
 #include "platform/platform_notifications_manager.h"
 #include "base/platform/base_platform_info.h"
-#include "base/platform/mac/base_confirm_quit.h"
 #include "boxes/peer_list_controllers.h"
 #include "boxes/about_box.h"
 #include "lang/lang_keys.h"
 #include "base/platform/mac/base_utilities_mac.h"
 #include "ui/widgets/input_fields.h"
 #include "ui/ui_utility.h"
-#include "facades.h"
 
 #include <QtWidgets/QApplication>
 #include <QtGui/QClipboard>
@@ -132,10 +130,14 @@ namespace Platform {
 namespace {
 
 void SendKeySequence(Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
-	const auto focused = QApplication::focusWidget();
-	if (qobject_cast<QLineEdit*>(focused) || qobject_cast<QTextEdit*>(focused) || dynamic_cast<HistoryInner*>(focused)) {
-		QApplication::postEvent(focused, new QKeyEvent(QEvent::KeyPress, key, modifiers));
-		QApplication::postEvent(focused, new QKeyEvent(QEvent::KeyRelease, key, modifiers));
+	const auto focused = static_cast<QObject*>(QApplication::focusWidget());
+	if (qobject_cast<QLineEdit*>(focused)
+		|| qobject_cast<QTextEdit*>(focused)
+		|| dynamic_cast<HistoryInner*>(focused)) {
+		QKeyEvent pressEvent(QEvent::KeyPress, key, modifiers);
+		focused->event(&pressEvent);
+		QKeyEvent releaseEvent(QEvent::KeyRelease, key, modifiers);
+		focused->event(&releaseEvent);
 	}
 }
 
@@ -214,7 +216,8 @@ MainWindow::Private::~Private() {
 
 MainWindow::MainWindow(not_null<Window::Controller*> controller)
 : Window::MainWindow(controller)
-, _private(std::make_unique<Private>(this)) {
+, _private(std::make_unique<Private>(this))
+, psMainMenu(this) {
 	auto forceOpenGL = std::make_unique<QOpenGLWidget>(this);
 	_hideAfterFullScreenTimer.setCallback([this] { hideAndDeactivate(); });
 }
@@ -222,7 +225,7 @@ MainWindow::MainWindow(not_null<Window::Controller*> controller)
 void MainWindow::closeWithoutDestroy() {
 	NSWindow *nsWindow = [reinterpret_cast<NSView*>(winId()) window];
 
-	auto isFullScreen = (([nsWindow styleMask] & NSFullScreenWindowMask) == NSFullScreenWindowMask);
+	auto isFullScreen = (([nsWindow styleMask] & NSWindowStyleMaskFullScreen) == NSWindowStyleMaskFullScreen);
 	if (isFullScreen) {
 		_hideAfterFullScreenTimer.callOnce(kHideAfterFullscreenTimeoutMs);
 		[nsWindow toggleFullScreen:nsWindow];
@@ -257,24 +260,11 @@ void MainWindow::hideAndDeactivate() {
 	hide();
 }
 
-bool MainWindow::preventsQuit(Core::QuitReason reason) {
-	// Thanks Chromium, see
-	// chromium.org/developers/design-documents/confirm-to-quit-experiment
-	return (reason == Core::QuitReason::QtQuitEvent)
-		&& Core::App().settings().macWarnBeforeQuit()
-		&& ([[NSApp currentEvent] type] == NSKeyDown)
-		&& !Platform::ConfirmQuit::RunModal(
-			tr::lng_mac_hold_to_quit(
-				tr::now,
-				lt_text,
-				Platform::ConfirmQuit::QuitKeysString()));
-}
-
 void MainWindow::unreadCounterChangedHook() {
-	updateIconCounters();
+	updateDockCounter();
 }
 
-void MainWindow::updateIconCounters() {
+void MainWindow::updateDockCounter() {
 	const auto counter = Core::App().unreadBadge();
 
 	const auto string = !counter
@@ -292,7 +282,7 @@ void MainWindow::createGlobalMenu() {
 		}
 	};
 
-	auto main = psMainMenu.addMenu(qsl("Teamgram"));
+	auto main = psMainMenu.addMenu(u"Teamgram"_q);
 	{
 		auto callback = [=] {
 			ensureWindowShown();
@@ -302,7 +292,7 @@ void MainWindow::createGlobalMenu() {
 			tr::lng_mac_menu_about_telegram(
 				tr::now,
 				lt_telegram,
-				qsl("Teamgram")),
+				u"Teamgram"_q),
 			std::move(callback))
 		->setMenuRole(QAction::AboutQtRole);
 	}

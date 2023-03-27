@@ -15,6 +15,7 @@ constexpr auto kPhotoLinkMediaProperty = 0x02;
 constexpr auto kDocumentLinkMediaProperty = 0x03;
 constexpr auto kSendReactionEmojiProperty = 0x04;
 constexpr auto kReactionsCountEmojiProperty = 0x05;
+constexpr auto kDocumentFilenameTooltipProperty = 0x06;
 
 namespace Ui {
 class Show;
@@ -41,6 +42,7 @@ struct ClickHandlerContext {
 	Fn<HistoryView::ElementDelegate*()> elementDelegate;
 	base::weak_ptr<Window::SessionController> sessionWindow;
 	std::shared_ptr<Ui::Show> show;
+	bool mayShowConfirmation = false;
 	bool skipBotAutoLogin = false;
 	bool botStartAutoSubmit = false;
 	// Is filled from peer info.

@@ -13,9 +13,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat.h"
 
 namespace Ui {
-namespace {
-
-} // namespace
 
 EmojiButton::EmojiButton(QWidget *parent, const style::IconButton &st)
 : RippleButton(parent, st.ripple)
@@ -122,7 +119,7 @@ QPoint EmojiButton::prepareRippleStartPosition() const {
 }
 
 QImage EmojiButton::prepareRippleMask() const {
-	return RippleAnimation::ellipseMask(QSize(_st.rippleAreaSize, _st.rippleAreaSize));
+	return RippleAnimation::EllipseMask(QSize(_st.rippleAreaSize, _st.rippleAreaSize));
 }
 
 } // namespace Ui

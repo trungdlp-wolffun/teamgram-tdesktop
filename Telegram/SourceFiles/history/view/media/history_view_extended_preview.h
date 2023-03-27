@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "history/view/media/history_view_media.h"
+#include "history/view/media/history_view_media_spoiler.h"
 
 enum class ImageRoundRadius;
 
@@ -55,6 +56,7 @@ public:
 	TextWithEntities getCaption() const override {
 		return _caption.toTextWithEntities();
 	}
+	void hideSpoilers() override;
 	bool needsBubble() const override;
 	bool customInfoLayout() const override {
 		return _caption.isEmpty();
@@ -80,38 +82,21 @@ private:
 	bool needInfoDisplay() const;
 	void validateImageCache(
 		QSize outer,
-		ImageRoundRadius radius,
-		RectParts corners) const;
-	[[nodiscard]] QImage prepareImageCache(
-		QSize outer,
-		ImageRoundRadius radius,
-		RectParts corners) const;
+		std::optional<Ui::BubbleRounding> rounding) const;
 	[[nodiscard]] QImage prepareImageCache(QSize outer) const;
 	void paintButton(
 		Painter &p,
 		QRect outer,
 		const PaintContext &context) const;
 
-	void fillSpoilerMess(
-		QPainter &p,
-		QRect rect,
-		ImageRoundRadius radius,
-		RectParts corners,
-		const PaintContext &context) const;
-
 	const not_null<Data::Invoice*> _invoice;
-	ClickHandlerPtr _link;
 	Ui::Text::String _caption;
-	mutable std::unique_ptr<Ui::SpoilerAnimation> _animation;
+	mutable MediaSpoiler _spoiler;
 	mutable QImage _inlineThumbnail;
-	mutable QImage _imageCache;
-	mutable QImage _cornerCache;
 	mutable QImage _buttonBackground;
 	mutable QColor _buttonBackgroundOverlay;
 	mutable Ui::Text::String _buttonText;
-	mutable int _imageCacheRoundRadius : 4 = 0;
-	mutable int _imageCacheRoundCorners : 12 = 0;
-	mutable int _imageCacheInvalid : 1 = 0;
+	mutable bool _imageCacheInvalid = false;
 
 };
 

@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_location.h"
 #include "ui/image/image.h"
 
+enum class ChatRestriction;
 class mtpFileLoader;
 
 namespace Images {
@@ -90,6 +91,8 @@ struct VoiceData : public DocumentAdditionalData {
 	char wavemax = 0;
 };
 
+using RoundData = VoiceData;
+
 namespace Serialize {
 class Document;
 } // namespace Serialize;
@@ -124,6 +127,8 @@ public:
 	[[nodiscard]] bool loadedInMediaCache() const;
 	void setLoadedInMediaCache(bool loaded);
 
+	[[nodiscard]] ChatRestriction requiredSendRight() const;
+
 	void setWaitingForAlbum();
 	[[nodiscard]] bool waitingForAlbum() const;
 
@@ -140,9 +145,10 @@ public:
 
 	[[nodiscard]] Image *getReplyPreview(
 		Data::FileOrigin origin,
-		not_null<PeerData*> context);
+		not_null<PeerData*> context,
+		bool spoiler);
 	[[nodiscard]] Image *getReplyPreview(not_null<HistoryItem*> item);
-	[[nodiscard]] bool replyPreviewLoaded() const;
+	[[nodiscard]] bool replyPreviewLoaded(bool spoiler) const;
 
 	[[nodiscard]] StickerData *sticker() const;
 	[[nodiscard]] Data::FileOrigin stickerSetOrigin() const;
@@ -152,6 +158,8 @@ public:
 	[[nodiscard]] const SongData *song() const;
 	[[nodiscard]] VoiceData *voice();
 	[[nodiscard]] const VoiceData *voice() const;
+	[[nodiscard]] RoundData *round();
+	[[nodiscard]] const RoundData *round() const;
 
 	void forceIsStreamedAnimation();
 	[[nodiscard]] bool isVoiceMessage() const;
@@ -177,6 +185,7 @@ public:
 	[[nodiscard]] bool isPatternWallPaperSVG() const;
 	[[nodiscard]] bool isPremiumSticker() const;
 	[[nodiscard]] bool isPremiumEmoji() const;
+	[[nodiscard]] bool emojiUsesTextColor() const;
 
 	[[nodiscard]] bool hasThumbnail() const;
 	[[nodiscard]] bool thumbnailLoading() const;
@@ -245,7 +254,7 @@ public:
 
 	[[nodiscard]] QString filename() const;
 	[[nodiscard]] QString mimeString() const;
-	[[nodiscard]] bool hasMimeType(QLatin1String mime) const;
+	[[nodiscard]] bool hasMimeType(const QString &mime) const;
 	void setMimeString(const QString &mime);
 
 	[[nodiscard]] bool hasAttachedStickers() const;
@@ -286,6 +295,7 @@ private:
 		ForceToCache = 0x100,
 		PremiumSticker = 0x200,
 		PossibleCoverThumbnail = 0x400,
+		UseTextColor = 0x800,
 	};
 	using Flags = base::flags<Flag>;
 	friend constexpr bool is_flag_type(Flag) { return true; };

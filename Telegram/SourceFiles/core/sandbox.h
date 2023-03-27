@@ -41,6 +41,7 @@ public:
 	int start();
 
 	void refreshGlobalProxy();
+	bool customWorkingDir() const;
 	uint64 installationTag() const;
 
 	void postponeCall(FnMut<void()> &&callable);
@@ -94,7 +95,9 @@ private:
 	void singleInstanceChecked();
 	void launchApplication();
 	void setupScreenScale();
-	void execExternal(const QString &cmd);
+
+	// Return window id for activation.
+	uint64 execExternal(const QString &cmd);
 
 	// Single instance application
 	void socketConnected();
@@ -112,7 +115,6 @@ private:
 	int _loopNestingLevel = 0;
 	std::vector<int> _previousLoopNestingLevels;
 	std::vector<PostponedCall> _postponedCalls;
-	SingleQueuedInvokation _handleObservables;
 
 	not_null<Launcher*> _launcher;
 	std::unique_ptr<Application> _application;

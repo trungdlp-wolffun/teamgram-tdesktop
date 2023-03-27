@@ -15,8 +15,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 class History;
 class HistoryBlock;
 class HistoryItem;
-class HistoryMessage;
-class HistoryService;
 struct HistoryMessageReply;
 
 namespace Data {
@@ -33,12 +31,13 @@ class PathShiftGradient;
 struct BubblePattern;
 struct ChatPaintContext;
 class ChatStyle;
+struct ReactionFlyAnimationArgs;
+class ReactionFlyAnimation;
+class RippleAnimation;
 } // namespace Ui
 
 namespace HistoryView::Reactions {
 struct ButtonParameters;
-struct AnimationArgs;
-class Animation;
 class InlineList;
 } // namespace HistoryView::Reactions
 
@@ -59,16 +58,16 @@ enum class Context : char {
 	ContactPreview
 };
 
+enum class OnlyEmojiAndSpaces : char {
+	Unknown,
+	Yes,
+	No,
+};
+
 class Element;
 class ElementDelegate {
 public:
 	virtual Context elementContext() = 0;
-	virtual std::unique_ptr<Element> elementCreate(
-		not_null<HistoryMessage*> message,
-		Element *replacing = nullptr) = 0;
-	virtual std::unique_ptr<Element> elementCreate(
-		not_null<HistoryService*> message,
-		Element *replacing = nullptr) = 0;
 	virtual bool elementUnderCursor(not_null<const Element*> view) = 0;
 	[[nodiscard]] virtual float64 elementHighlightOpacity(
 		not_null<const HistoryItem*> item) const = 0;
@@ -107,6 +106,7 @@ public:
 		not_null<const Element*> view,
 		Element *replacing) = 0;
 	virtual void elementCancelPremium(not_null<const Element*> view) = 0;
+	virtual QString elementAuthorRank(not_null<const Element*> view) = 0;
 
 	virtual ~ElementDelegate() {
 	}
@@ -124,12 +124,6 @@ public:
 		Fn<void()> update);
 	~SimpleElementDelegate();
 
-	std::unique_ptr<Element> elementCreate(
-		not_null<HistoryMessage*> message,
-		Element *replacing = nullptr) override;
-	std::unique_ptr<Element> elementCreate(
-		not_null<HistoryService*> message,
-		Element *replacing = nullptr) override;
 	bool elementUnderCursor(not_null<const Element*> view) override;
 	[[nodiscard]] float64 elementHighlightOpacity(
 		not_null<const HistoryItem*> item) const override;
@@ -168,6 +162,8 @@ public:
 		not_null<const Element*> view,
 		Element *replacing) override;
 	void elementCancelPremium(not_null<const Element*> view) override;
+	QString elementAuthorRank(not_null<const Element*> view) override;
+
 
 protected:
 	[[nodiscard]] not_null<Window::SessionController*> controller() const {
@@ -234,20 +230,40 @@ struct DateBadge : public RuntimeComponent<DateBadge, Element> {
 
 };
 
+struct FakeBotAboutTop : public RuntimeComponent<FakeBotAboutTop, Element> {
+	void init();
+
+	Ui::Text::String text;
+	int maxWidth = 0;
+	int height = 0;
+};
+
+struct TopicButton {
+	std::unique_ptr<Ui::RippleAnimation> ripple;
+	ClickHandlerPtr link;
+	Ui::Text::String name;
+	QPoint lastPoint;
+	int nameVersion = 0;
+};
+
 class Element
 	: public Object
 	, public RuntimeComposer<Element>
 	, public ClickHandlerHost
 	, public base::has_weak_ptr {
 public:
-	enum class Flag : uchar {
-		ServiceMessage = 0x01,
-		NeedsResize = 0x02,
-		AttachedToPrevious = 0x04,
-		AttachedToNext = 0x08,
-		HiddenByGroup = 0x10,
-		SpecialOnlyEmoji = 0x20,
-		CustomEmojiRepainting = 0x40,
+	enum class Flag : uint16 {
+		ServiceMessage = 0x0001,
+		NeedsResize = 0x0002,
+		AttachedToPrevious = 0x0004,
+		AttachedToNext = 0x0008,
+		BubbleAttachedToPrevious = 0x0010,
+		BubbleAttachedToNext = 0x0020,
+		HiddenByGroup = 0x0040,
+		SpecialOnlyEmoji = 0x0080,
+		CustomEmojiRepainting = 0x0100,
+		ScheduledUntilOnline = 0x0200,
+		TopicRootReply = 0x0400,
 	};
 	using Flags = base::flags<Flag>;
 	friend inline constexpr auto is_flag_type(Flag) { return true; }
@@ -281,6 +297,10 @@ public:
 
 	[[nodiscard]] bool isAttachedToPrevious() const;
 	[[nodiscard]] bool isAttachedToNext() const;
+	[[nodiscard]] bool isBubbleAttachedToPrevious() const;
+	[[nodiscard]] bool isBubbleAttachedToNext() const;
+
+	[[nodiscard]] bool isTopicRootReply() const;
 
 	[[nodiscard]] int skipBlockWidth() const;
 	[[nodiscard]] int skipBlockHeight() const;
@@ -303,12 +323,14 @@ public:
 	[[nodiscard]] Ui::Text::IsolatedEmoji isolatedEmoji() const;
 	[[nodiscard]] Ui::Text::OnlyCustomEmoji onlyCustomEmoji() const;
 
+	[[nodiscard]] OnlyEmojiAndSpaces isOnlyEmojiAndSpaces() const;
+
 	// For blocks context this should be called only from recountAttachToPreviousInBlocks().
-	void setAttachToPrevious(bool attachToNext);
+	void setAttachToPrevious(bool attachToNext, Element *previous = nullptr);
 
 	// For blocks context this should be called only from recountAttachToPreviousInBlocks()
 	// of the next item or when the next item is removed through nextInBlocksRemoved() call.
-	void setAttachToNext(bool attachToNext);
+	void setAttachToNext(bool attachToNext, Element *next = nullptr);
 
 	// For blocks context this should be called only from recountDisplayDate().
 	void setDisplayDate(bool displayDate);
@@ -365,10 +387,12 @@ public:
 	[[nodiscard]] virtual bool displayFromPhoto() const;
 	[[nodiscard]] virtual bool hasFromName() const;
 	[[nodiscard]] virtual bool displayFromName() const;
+	[[nodiscard]] virtual TopicButton *displayedTopicButton() const;
 	[[nodiscard]] virtual bool displayForwardedFrom() const;
 	[[nodiscard]] virtual bool hasOutLayout() const;
 	[[nodiscard]] virtual bool drawBubble() const;
 	[[nodiscard]] virtual bool hasBubble() const;
+	[[nodiscard]] virtual bool unwrapped() const;
 	[[nodiscard]] virtual int minWidthForMedia() const {
 		return 0;
 	}
@@ -381,7 +405,8 @@ public:
 		int left,
 		int top,
 		int outerWidth) const;
-	[[nodiscard]] virtual ClickHandlerPtr rightActionLink() const;
+	[[nodiscard]] virtual ClickHandlerPtr rightActionLink(
+		std::optional<QPoint> pressPoint) const;
 	[[nodiscard]] virtual TimeId displayedEditDate() const;
 	[[nodiscard]] virtual bool hasVisibleText() const;
 	[[nodiscard]] virtual HistoryMessageReply *displayedReply() const;
@@ -448,12 +473,12 @@ public:
 
 	[[nodiscard]] bool markSponsoredViewed(int shownFromTop) const;
 
-	virtual void animateReaction(Reactions::AnimationArgs &&args);
+	virtual void animateReaction(Ui::ReactionFlyAnimationArgs &&args);
 	void animateUnreadReactions();
 	[[nodiscard]] virtual auto takeReactionAnimations()
 	-> base::flat_map<
 		Data::ReactionId,
-		std::unique_ptr<Reactions::Animation>>;
+		std::unique_ptr<Ui::ReactionFlyAnimation>>;
 
 	virtual ~Element();
 
@@ -488,6 +513,7 @@ protected:
 
 	void clearSpecialOnlyEmoji();
 	void checkSpecialOnlyEmoji();
+	void refreshIsTopicRootReply();
 
 private:
 	// This should be called only from previousInBlocksChanged()
@@ -501,6 +527,8 @@ private:
 	// HistoryView::Element::Flag::AttachedToPrevious.
 	void recountAttachToPreviousInBlocks();
 
+	[[nodiscard]] bool countIsTopicRootReply() const;
+
 	QSize countOptimalSize() final override;
 	QSize countCurrentSize(int newWidth) final override;
 
@@ -509,6 +537,12 @@ private:
 
 	void refreshMedia(Element *replacing);
 
+	struct TextWithLinks {
+		TextWithEntities text;
+		std::vector<ClickHandlerPtr> links;
+	};
+	[[nodiscard]] TextWithLinks contextDependentServiceText();
+
 	const not_null<ElementDelegate*> _delegate;
 	const not_null<HistoryItem*> _data;
 	HistoryBlock *_block = nullptr;
@@ -516,16 +550,15 @@ private:
 	mutable ClickHandlerPtr _fromLink;
 	const QDateTime _dateTime;
 
-	mutable Ui::Text::String _text = { st::msgMinWidth };
+	mutable Ui::Text::String _text;
 	mutable int _textWidth = -1;
 	mutable int _textHeight = 0;
 
 	int _y = 0;
 	int _indexInBlock = -1;
 
-	bool _isScheduledUntilOnline = false;
-	mutable bool _heavyCustomEmoji = false;
 	mutable Flags _flags = Flag(0);
+	mutable bool _heavyCustomEmoji = false;
 	Context _context = Context();
 
 };

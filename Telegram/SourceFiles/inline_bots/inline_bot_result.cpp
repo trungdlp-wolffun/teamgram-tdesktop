@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_origin.h"
 #include "data/data_photo_media.h"
 #include "data/data_document_media.h"
+#include "history/history.h"
 #include "history/history_item_reply_markup.h"
 #include "inline_bots/inline_bot_layout_item.h"
 #include "inline_bots/inline_bot_send_data.h"
@@ -336,10 +337,11 @@ bool Result::onChoose(Layout::ItemBase *layout) {
 }
 
 Media::View::OpenRequest Result::openRequest() {
+	using namespace Media::View;
 	if (_document) {
-		return Media::View::OpenRequest(nullptr, _document, nullptr);
+		return OpenRequest(nullptr, _document, nullptr, MsgId());
 	} else if (_photo) {
-		return Media::View::OpenRequest(nullptr, _photo, nullptr);
+		return OpenRequest(nullptr, _photo, nullptr, MsgId());
 	}
 	return {};
 }
@@ -366,7 +368,7 @@ bool Result::hasThumbDisplay() const {
 };
 
 void Result::addToHistory(
-		History *history,
+		not_null<History*> history,
 		MessageFlags flags,
 		MsgId msgId,
 		PeerId fromId,
@@ -393,8 +395,13 @@ void Result::addToHistory(
 		std::move(markup));
 }
 
-QString Result::getErrorOnSend(History *history) const {
-	return sendData->getErrorOnSend(this, history);
+QString Result::getErrorOnSend(not_null<History*> history) const {
+	const auto specific = sendData->getErrorOnSend(this, history);
+	return !specific.isEmpty()
+		? specific
+		: Data::RestrictionError(
+			history->peer,
+			ChatRestriction::SendInline).value_or(QString());
 }
 
 std::optional<Data::LocationPoint> Result::getLocationPoint() const {
@@ -473,7 +480,7 @@ MTPVector<MTPDocumentAttribute> Result::adjustAttributes(
 	const auto mime = qs(mimeType);
 	if (_type == Type::Gif) {
 		if (!exists(mtpc_documentAttributeFilename)) {
-			auto filename = (mime == qstr("video/mp4")
+			auto filename = (mime == u"video/mp4"_q
 				? "animation.gif.mp4"
 				: "animation.gif");
 			result.push_back(MTP_documentAttributeFilename(
@@ -486,7 +493,7 @@ MTPVector<MTPDocumentAttribute> Result::adjustAttributes(
 		const auto audio = find(mtpc_documentAttributeAudio);
 		if (audio != result.cend()) {
 			using Flag = MTPDdocumentAttributeAudio::Flag;
-			if (mime == qstr("audio/ogg")) {
+			if (mime == u"audio/ogg"_q) {
 				// We always treat audio/ogg as a voice message.
 				// It was that way before we started to get attributes here.
 				const auto &fields = audio->c_documentAttributeAudio();
@@ -506,10 +513,10 @@ MTPVector<MTPDocumentAttribute> Result::adjustAttributes(
 				const auto p = Core::MimeTypeForName(mime).globPatterns();
 				auto pattern = p.isEmpty() ? QString() : p.front();
 				const auto extension = pattern.isEmpty()
-					? qsl(".unknown")
+					? u".unknown"_q
 					: pattern.replace('*', QString());
 				const auto filename = filedialogDefaultName(
-					qsl("inline"),
+					u"inline"_q,
 					extension,
 					QString(),
 					true);

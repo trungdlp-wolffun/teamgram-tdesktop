@@ -1,3 +1,226 @@
+4.7.1 (21.03.23)
+
+- Fix media viewer with some system scale settings on Windows.
+- Fix calls on Linux.
+
+4.7 (19.03.23)
+
+- You can disable all resource-intensive animations and animated stickers and emoji.
+- Power saving mode turns on automatically based on system battery saving settings.
+- Fully flexible playback speed settings for videos, voice and video messages.
+- Click the "1X" button to quickly switch between normal and adjusted speed – or hold it to set any speed between 0.5-2.5x.
+- Improved sound quality for adjusted speed playback.
+- Read receipts in groups under 100 members now show reaction timestamps and when your messages were read.
+- When inviting people to groups, you can quickly send invite links to anyone who doesn't allow adding them directly.
+- Invite links now show previews in chats.
+- Fully translatable bots. Bot descriptions and ”What can this bot do?" sections can now be translated.
+- Starting a call now shows a confirmation window. 
+- Fixed pasting images from Firefox on Windows.
+- Global Fn+F shortcut to switch active window to full screen mode on macOS.
+- Silent notification sound in Focus Mode on macOS.
+
+4.6.12 beta (17.03.23)
+
+- Fix several possible crashes.
+- Deprecate macOS 10.12, Ubuntu 18.04 and CentOS 7 in July.
+
+4.6.11 beta (15.03.23)
+
+- Allow larger interface scale values on high-dpi screens.
+- Implement new voice and video speed change interface (up to 2.5x).
+- Support global Fn+F shortcut to toggle fullscreen on macOS.
+- Silent notification sound in Focus Mode on macOS.
+- Fix media viewer on macOS with several screens.
+- Fix a crash in connection type box.
+- Fix possible crash on quit.
+
+4.6.10 beta (12.03.23)
+
+- Suggest sending an invite link if user forbids inviting him to groups.
+- Show when a reaction was left on your message in small groups.
+- Fix a crash in video chats on Windows.
+- Fix a crash in audio speed change.
+
+4.6.9 beta (10.03.23)
+
+- Fix audio speed change filter in Windows x64 build.
+- Fix build scripts.
+
+4.6.8 beta (09.03.23)
+
+- Improve quality of voice messages with changed playback speed.
+- Show when your message was read in small groups.
+- Fix pasting images from Firefox on Windows.
+- Improve memory usage for custom emoji.
+
+4.6.7 beta (02.03.23)
+
+- Fix crash when accepting incoming calls.
+- Remove sound when cancelling an unconfirmed call.
+
+4.6.6 beta (01.03.23)
+
+- Confirmation window before starting a call.
+- New "Battery and Animations" settings section.
+- "Save Power on Low Battery" option for laptops.
+- Improved windowed mode support for media viewer.
+- Hardware accelerated video playback fix on macOS.
+- New application icon on macOS following the system guidelines.
+
+4.6.5 (25.02.23)
+
+- Fix payment card input field validation.
+- Fix video playback with hardware acceleration on macOS.
+
+4.6.4 beta (18.02.23)
+
+- Allow media viewer to exit fullscreen and become a normal window.
+
+4.6.3 (15.02.23)
+
+- Optimize chats list initial loading.
+- Various crash fixes.
+
+4.6.2 (07.02.23)
+
+- One more attempt to fix fonts on Windows.
+- Fix polls forwarding to private chats.
+- Improve translations bar appearance.
+- Improve userpic editor presets.
+
+4.6.1 (06.02.23)
+
+- Fix fonts fallback on Windows.
+- Fix crash in userpic editor.
+- Fix some crashes on 32 bit Window build.
+- Bug fixes and other minor improvements.
+
+4.6 (03.02.23)
+
+- Emoji Profile Pictures. Quickly create group and profile pictures from animated emoji and stickers with the new "Use an Emoji" option.
+- Emoji Categories. Filter stickers and emoji by categories like "love", "cheers" or "sleeping" in the sticker and emoji tabs.
+- Chat Translation. As a Premium user, translate entire chats in real time as you scroll them or receive new messages.
+- Media Permissions in Groups. Control whether members of your groups can send 9 distinct media types – like Photos, Voice or Video Messages.
+- Select Chats for Bots. Bot developers can now let users quickly select groups, channels or contacts that meet predefined criteria (more in @BotNews).
+- Open in New Window. Open chats or additional accounts in separate windows.
+
+4.5.9 beta (02.02.23)
+
+- Hide taskbar window preview when Telegram is locked by a passcode (Windows only).
+- More improvements for working with multiple windows.
+- Bug fixes and other minor improvements.
+
+4.5.8 beta (21.01.23)
+
+- Allow opening another account in a new window (see Settings > Advanced > Experimental Settings).
+- A lot of bugfixes for working with more than one window.
+
+4.5.7 beta (13.01.23)
+
+- Fix glitches after moving window to another screen (Windows only).
+
+4.5.6 beta (12.01.23)
+
+- Try enabling non-fractional scale High DPI support on Windows and Linux.
+- Experimental setting for fractional scale High DPI support on Windows and Linux.
+- Fix navigation to bottom problems in groups you didn't join.
+- Fix a crash in chat export settings changes.
+- Fix a crash in sending some of JPEG images.
+- Fix CJK fonts on Windows.
+
+4.5.5 beta (10.01.23)
+
+- Fix crash in Settings.
+
+4.5.4 beta (10.01.23)
+
+- Allow wide range of interface scale options.
+- Show opened chat name in the window title.
+- Bug fixes and other minor improvements.
+- Fix updating on macOS older than 10.14.
+
+4.5.3 (06.01.23)
+
+- Attempt to fix incoming video in calls from mobile apps.
+
+4.5.2 (03.01.23)
+
+- Fix unread reactions button in private chats.
+- Fix tile background saving after an app update.
+- Allow Ctrl+6,7,8 to activate extra pinned chats.
+
+4.5.1 (02.01.23)
+
+- Fix crash in profile photo privacy edition.
+- Allow sending photos larger than 1280px (in Experimental Settings).
+
+4.5 (30.12.22)
+
+- Media with spoiler effects. You can wrap photos and videos you send in a fuzzy cover by selecting media in the attachment menu and tapping (...) > Hide With Spoiler.
+- Setting pictures for your contacts. You can choose your own picture for a contact – only you will see it on their profile.
+- Suggested profile pictures. When editing your contacts, you can suggest a photo for their profile. It will take them just two clicks to add the picture you suggested.
+- Public profile pictures. If you only allow certain users to see your profile photos, you can set a public picture for everyone else.
+- Ultimate profile picture privacy. You can set 'Who can see my profile photos' to 'Nobody' and add some users or groups as exceptions.
+- Member list privacy. Owners of large groups can hide the list of members.
+
+4.4.3 beta (29.12.22)
+
+- Support for anonymous numbers from the Fragment.com platform.
+- Fix a crash in own profile photo updating.
+- Bug fixes and other minor improvements.
+
+4.4.2 beta (28.12.22)
+
+- Send photos and video files hidden by a spoiler effect.
+- Set a public photo for those who are restricted to see your profile photo in the Privacy Settings.
+- Bug fixes and other minor improvements.
+
+4.4.1 (07.12.22)
+
+- Bug fixes and other minor improvements.
+
+4.4 (06.12.22)
+
+- You can set a Global Auto-Delete Timer for all new chats and groups you create.
+- New messages will be deleted after 1 day, week, month - or a custom duration you choose.
+- The new menu in Settings > Privacy & Security > Auto-Delete Messages also lets you set up Auto-Delete for any of your existing chats faster.
+- Admins of groups with 100+ members can organize discussions into separate topics.
+- Topics now have a two-column layout that keeps recent chats easily accessible as you browse topics.
+- Previews of topic messages in the chat list work like a button - click to jump to the last updated topic.
+- Up to 5 topics can be pinned to the top of the list.
+- Each topic now supports multiple pinned messages.
+- The View as Messages mode now shows which topic each message belongs to.
+- Badge counters for topics you never opened will have a lighter, less distracting color.
+- A new General topic is now included by default, containing service messages and the earlier message history from the group.
+- Admins can rename the General topic.
+- Large groups can enable Aggressive Filtering in Manage Group > Administrators to remove more spam with automated algorithms.
+- Admins help improve filtering by reporting any false positives in Recent Actions.
+
+4.3.4 (25.11.22)
+
+- Fix OpenGL regression in Qt and language detection.
+
+4.3.3 (23.11.22)
+
+- Fix an issue with media auto-download on Windows.
+- Fix switching accounts in maximized window.
+- Fix collapsed archive row layout.
+
+4.3.2 (21.11.22)
+
+- Enable message translations in Settings > Language.
+- Fast jump to the last updated topic.
+- Bug fixes and other minor improvements.
+
+4.3.1 (07.11.22)
+
+- Critical bug fixes.
+
+4.3 (05.11.22)
+
+- Groups with more than 200 members can now have their discussions organized into topics.
+- Premium users can now convert both voice messages and video messages into text.
+
 4.2.4 (30.09.22)
 
 - Fix crash in emoji statuses clearing.

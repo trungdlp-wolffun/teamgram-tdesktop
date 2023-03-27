@@ -325,30 +325,30 @@ QString ComputeDocumentName(
 	}
 	const auto mimeString = QString::fromUtf8(data.mime);
 	const auto mimeType = Core::MimeTypeForName(mimeString);
-	const auto hasMimeType = [&](QLatin1String mime) {
+	const auto hasMimeType = [&](const auto &mime) {
 		return !mimeString.compare(mime, Qt::CaseInsensitive);
 	};
 	const auto patterns = mimeType.globPatterns();
 	const auto pattern = patterns.isEmpty() ? QString() : patterns.front();
 	if (data.isVoiceMessage) {
-		const auto isMP3 = hasMimeType(qstr("audio/mp3"));
-		return qsl("audio_")
+		const auto isMP3 = hasMimeType(u"audio/mp3"_q);
+		return u"audio_"_q
 			+ QString::number(++context.audios)
 			+ PrepareFileNameDatePart(date)
-			+ (isMP3 ? qsl(".mp3") : qsl(".ogg"));
+			+ (isMP3 ? u".mp3"_q : u".ogg"_q);
 	} else if (data.isVideoFile) {
 		const auto extension = pattern.isEmpty()
-			? qsl(".mov")
+			? u".mov"_q
 			: QString(pattern).replace('*', QString());
-		return qsl("video_")
+		return u"video_"_q
 			+ QString::number(++context.videos)
 			+ PrepareFileNameDatePart(date)
 			+ extension;
 	} else {
 		const auto extension = pattern.isEmpty()
-			? qsl(".unknown")
+			? u".unknown"_q
 			: QString(pattern).replace('*', QString());
-		return qsl("file_")
+		return u"file_"_q
 			+ QString::number(++context.files)
 			+ PrepareFileNameDatePart(date)
 			+ extension;
@@ -1059,7 +1059,16 @@ ServiceAction ParseServiceAction(
 		result.content = content;
 	}, [&](const MTPDmessageActionBotAllowed &data) {
 		auto content = ActionBotAllowed();
-		content.domain = ParseString(data.vdomain());
+		if (const auto app = data.vapp()) {
+			app->match([&](const MTPDbotApp &data) {
+				content.appId = data.vid().v;
+				content.app = ParseString(data.vtitle());
+			}, [](const MTPDbotAppNotModified &) {});
+		}
+		if (const auto domain = data.vdomain()) {
+			content.domain = ParseString(*domain);
+		}
+		content.attachMenu = data.is_attach_menu();
 		result.content = content;
 	}, [&](const MTPDmessageActionSecureValuesSentMe &data) {
 		// Should not be in user inbox.
@@ -1152,6 +1161,32 @@ ServiceAction ParseServiceAction(
 			qs(data.vcurrency())).toUtf8();
 		content.months = data.vmonths().v;
 		result.content = content;
+	}, [&](const MTPDmessageActionTopicCreate &data) {
+		auto content = ActionTopicCreate();
+		content.title = ParseString(data.vtitle());
+		result.content = content;
+	}, [&](const MTPDmessageActionTopicEdit &data) {
+		auto content = ActionTopicEdit();
+		if (const auto title = data.vtitle()) {
+			content.title = ParseString(*title);
+		}
+		if (const auto icon = data.vicon_emoji_id()) {
+			content.iconEmojiId = icon->v;
+		}
+		result.content = content;
+	}, [&](const MTPDmessageActionSuggestProfilePhoto &data) {
+		auto content = ActionSuggestProfilePhoto();
+		content.photo = ParsePhoto(
+			data.vphoto(),
+			mediaFolder
+			+ "photos/"
+			+ PreparePhotoFileName(++context.photos, date));
+		result.content = content;
+	}, [&](const MTPDmessageActionRequestedPeer &data) {
+		auto content = ActionRequestedPeer();
+		content.peerId = ParsePeerId(data.vpeer());
+		content.buttonId = data.vbutton_id().v;
+		result.content = content;
 	}, [](const MTPDmessageActionEmpty &data) {});
 	return result;
 }
@@ -1160,6 +1195,9 @@ File &Message::file() {
 	const auto content = &action.content;
 	if (const auto photo = std::get_if<ActionChatEditPhoto>(content)) {
 		return photo->photo.image.file;
+	} else if (const auto photo = std::get_if<ActionSuggestProfilePhoto>(
+			content)) {
+		return photo->photo.image.file;
 	}
 	return media.file();
 }
@@ -1167,6 +1205,9 @@ File &Message::file() {
 const File &Message::file() const {
 	const auto content = &action.content;
 	if (const auto photo = std::get_if<ActionChatEditPhoto>(content)) {
+		return photo->photo.image.file;
+	} else if (const auto photo = std::get_if<ActionSuggestProfilePhoto>(
+			content)) {
 		return photo->photo.image.file;
 	}
 	return media.file();

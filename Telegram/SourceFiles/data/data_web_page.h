@@ -26,10 +26,12 @@ enum class WebPageType {
 
 	Photo,
 	Video,
+	Document,
 
 	User,
 	Bot,
 	Profile,
+	BotApp,
 
 	WallPaper,
 	Theme,

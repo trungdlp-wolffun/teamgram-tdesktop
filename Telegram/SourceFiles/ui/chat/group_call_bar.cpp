@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_chat.h"
 #include "styles/style_calls.h"
 #include "styles/style_info.h" // st::topBarArrowPadding, like TopBarWidget.
+#include "styles/style_window.h" // st::columnMinimalWidthLeft
 #include "styles/palette.h"
 
 #include <QtGui/QtEvents>
@@ -219,7 +220,9 @@ void GroupCallBar::setupInner() {
 	_inner->setCursor(style::cur_pointer);
 	_inner->events(
 	) | rpl::filter([=](not_null<QEvent*> event) {
-		return (event->type() == QEvent::MouseButtonPress);
+		return (event->type() == QEvent::MouseButtonPress)
+			&& (static_cast<QMouseEvent*>(event.get())->button()
+				== Qt::LeftButton);
 	}) | rpl::map([=] {
 		return _inner->events(
 		) | rpl::filter([=](not_null<QEvent*> event) {
@@ -242,12 +245,20 @@ void GroupCallBar::setupRightButton(not_null<RoundButton*> button) {
 	rpl::combine(
 		_inner->widthValue(),
 		button->widthValue()
-	) | rpl::start_with_next([=](int outerWidth, int) {
+	) | rpl::start_with_next([=](int outerWidth, int buttonWidth) {
 		// Skip shadow of the bar above.
 		const auto top = (st::historyReplyHeight
 			- st::lineWidth
 			- button->height()) / 2 + st::lineWidth;
-		button->moveToRight(top, top, outerWidth);
+		const auto narrow = (outerWidth < st::columnMinimalWidthLeft / 2);
+		if (narrow) {
+			button->moveToLeft(
+				(outerWidth - buttonWidth) / 2,
+				top,
+				outerWidth);
+		} else {
+			button->moveToRight(top, top, outerWidth);
+		}
 	}, button->lifetime());
 
 	button->clicks() | rpl::start_to_stream(_joinClicks, button->lifetime());
@@ -256,6 +267,14 @@ void GroupCallBar::setupRightButton(not_null<RoundButton*> button) {
 void GroupCallBar::paint(Painter &p) {
 	p.fillRect(_inner->rect(), st::historyComposeAreaBg);
 
+	const auto narrow = (_inner->width() < st::columnMinimalWidthLeft / 2);
+	if (!narrow) {
+		paintTitleAndStatus(p);
+		paintUserpics(p);
+	}
+}
+
+void GroupCallBar::paintTitleAndStatus(Painter &p) {
 	const auto left = st::topBarArrowPadding.right();
 	const auto titleTop = st::msgReplyPadding.top();
 	const auto textTop = titleTop + st::msgServiceNameFont->height;
@@ -289,8 +308,9 @@ void GroupCallBar::paint(Painter &p) {
 		}
 		const auto parsed = base::unixtime::parse(_content.scheduleDate);
 		const auto date = parsed.date();
-		const auto time = parsed.time().toString(
-			QLocale::system().timeFormat(QLocale::ShortFormat));
+		const auto time = QLocale().toString(
+			parsed.time(),
+			QLocale::ShortFormat);
 		const auto today = QDate::currentDate();
 		if (date == today) {
 			return tr::lng_group_call_starts_today(tr::now, lt_time, time);
@@ -319,9 +339,14 @@ void GroupCallBar::paint(Painter &p) {
 				? tr::lng_group_call_starts_channel
 				: tr::lng_group_call_starts)(tr::now, lt_when, when)
 			: _content.count > 0
-			? tr::lng_group_call_members(tr::now, lt_count, _content.count)
+			? tr::lng_group_call_members(
+				tr::now,
+				lt_count_decimal,
+				_content.count)
 			: tr::lng_group_call_no_members(tr::now)));
+}
 
+void GroupCallBar::paintUserpics(Painter &p) {
 	const auto size = st::historyGroupCallUserpics.size;
 	// Skip shadow of the bar above.
 	const auto top = (st::historyReplyHeight - st::lineWidth - size) / 2
@@ -418,7 +443,10 @@ rpl::producer<> GroupCallBar::barClicks() const {
 }
 
 rpl::producer<> GroupCallBar::joinClicks() const {
-	return _joinClicks.events() | rpl::to_empty;
+	using namespace rpl::mappers;
+	return _joinClicks.events()
+		| rpl::filter(_1 == Qt::LeftButton)
+		| rpl::to_empty;
 }
 
 } // namespace Ui

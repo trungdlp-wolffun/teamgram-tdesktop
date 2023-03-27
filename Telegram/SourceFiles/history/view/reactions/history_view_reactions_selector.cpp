@@ -247,7 +247,7 @@ int Selector::extendTopForCategories() const {
 int Selector::minimalHeight() const {
 	return _skipy
 		+ (_recentRows * _size)
-		+ st::roundRadiusSmall
+		+ st::emojiPanRadius
 		+ st::reactPanelEmojiPan.padding.bottom();
 }
 
@@ -279,6 +279,12 @@ void Selector::initGeometry(int innerTop) {
 
 	if (!_strip) {
 		expand();
+	}
+}
+
+void Selector::beforeDestroy() {
+	if (_list) {
+		_list->beforeHiding();
 	}
 }
 
@@ -431,7 +437,7 @@ auto Selector::paintExpandingBg(QPainter &p, float64 progress)
 	constexpr auto kFramesCount = Ui::RoundAreaWithShadow::kFramesCount;
 	const auto frame = int(base::SafeRound(progress * (kFramesCount - 1)));
 	const auto radiusStart = st::reactStripHeight / 2.;
-	const auto radiusEnd = st::roundRadiusSmall;
+	const auto radiusEnd = st::emojiPanRadius;
 	const auto radius = _reactions.customAllowed
 		? (radiusStart + progress * (radiusEnd - radiusStart))
 		: radiusStart;
@@ -521,7 +527,7 @@ void Selector::finishExpand() {
 		const auto pattern = _cachedRound.validateFrame(
 			kFramesCount - 1,
 			1.,
-			st::roundRadiusSmall);
+			st::emojiPanRadius);
 		const auto fill = _cachedRound.FillWithImage(q, rect(), pattern);
 		if (!fill.isEmpty()) {
 			q.fillRect(fill, st::defaultPopupMenu.menu.itemBg);
@@ -531,6 +537,7 @@ void Selector::finishExpand() {
 		_footer->show();
 	}
 	_scroll->show();
+	_list->afterShown();
 
 	if (const auto controller = _parentController.get()) {
 		controller->session().api().updateCustomEmoji();
@@ -677,6 +684,7 @@ void Selector::expand() {
 	cacheExpandIcon();
 
 	[[maybe_unused]] const auto grabbed = Ui::GrabWidget(_scroll);
+	_list->prepareExpanding();
 	setSelected(-1);
 
 	base::call_delayed(kExpandDelay, this, [this] {
@@ -937,8 +945,17 @@ AttachSelectorResult MakeJustSelectorMenu(
 	if (!AdjustMenuGeometryForSelector(menu, desiredPosition, selector)) {
 		return AttachSelectorResult::Failed;
 	}
+	if (mode != ChatHelpers::EmojiListMode::RecentReactions) {
+		Ui::Platform::FixPopupMenuNativeEmojiPopup(menu);
+	}
 	const auto selectorInnerTop = menu->preparedPadding().top()
 		- st::reactStripExtend.top();
+	menu->animatePhaseValue(
+	) | rpl::start_with_next([=](Ui::PopupMenu::AnimatePhase phase) {
+		if (phase == Ui::PopupMenu::AnimatePhase::StartHide) {
+			selector->beforeDestroy();
+		}
+	}, selector->lifetime());
 	selector->initGeometry(selectorInnerTop);
 	selector->show();
 
@@ -967,7 +984,7 @@ AttachSelectorResult MakeJustSelectorMenu(
 			state.toggling);
 	}, selector->lifetime());
 
-	const auto weak = base::make_weak(controller.get());
+	const auto weak = base::make_weak(controller);
 	controller->enableGifPauseReason(
 		Window::GifPauseReason::MediaPreview);
 	QObject::connect(menu.get(), &QObject::destroyed, [weak] {
@@ -992,6 +1009,7 @@ AttachSelectorResult AttachSelectorToMenu(
 	if (reactions.recent.empty() && !reactions.morePremiumAvailable) {
 		return AttachSelectorResult::Skipped;
 	}
+	const auto withSearch = reactions.customAllowed;
 	const auto selector = Ui::CreateChild<Selector>(
 		menu.get(),
 		controller,
@@ -1001,9 +1019,18 @@ AttachSelectorResult AttachSelectorToMenu(
 	if (!AdjustMenuGeometryForSelector(menu, desiredPosition, selector)) {
 		return AttachSelectorResult::Failed;
 	}
+	if (withSearch) {
+		Ui::Platform::FixPopupMenuNativeEmojiPopup(menu);
+	}
 	const auto selectorInnerTop = selector->useTransparency()
 		? (menu->preparedPadding().top() - st::reactStripExtend.top())
 		: st::lineWidth;
+	menu->animatePhaseValue(
+	) | rpl::start_with_next([=](Ui::PopupMenu::AnimatePhase phase) {
+		if (phase == Ui::PopupMenu::AnimatePhase::StartHide) {
+			selector->beforeDestroy();
+		}
+	}, selector->lifetime());
 	selector->initGeometry(selectorInnerTop);
 	selector->show();
 
@@ -1040,7 +1067,7 @@ AttachSelectorResult AttachSelectorToMenu(
 			state.toggling);
 	}, selector->lifetime());
 
-	const auto weak = base::make_weak(controller.get());
+	const auto weak = base::make_weak(controller);
 	controller->enableGifPauseReason(
 		Window::GifPauseReason::MediaPreview);
 	QObject::connect(menu.get(), &QObject::destroyed, [weak] {

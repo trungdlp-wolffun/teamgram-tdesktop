@@ -9,10 +9,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "ui/chat/attach/attach_album_thumbnail.h"
 #include "ui/chat/attach/attach_prepare.h"
+#include "ui/widgets/popup_menu.h"
 #include "ui/painter.h"
+#include "lang/lang_keys.h"
 #include "styles/style_chat.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
+#include "styles/style_menu_icons.h"
 
 #include <QtWidgets/QApplication>
 
@@ -52,8 +55,35 @@ void AlbumPreview::updateFileRows() {
 	Expects(_order.size() == _thumbs.size());
 
 	const auto isFile = !_sendWay.sendImagesAsPhotos();
+	auto top = 0;
 	for (auto i = 0; i < _order.size(); i++) {
-		_thumbs[i]->updateFileRow(isFile ? _order[i] : -1);
+		const auto &thumb = _thumbs[_order[i]];
+		thumb->setButtonVisible(isFile && !thumb->isCompressedSticker());
+		thumb->moveButtons(top);
+		top += thumb->fileHeight() + st::sendMediaRowSkip;
+	}
+}
+
+base::flat_set<int> AlbumPreview::collectSpoileredIndices() {
+	auto result = base::flat_set<int>();
+	result.reserve(_thumbs.size());
+	auto i = 0;
+	for (const auto &thumb : _thumbs) {
+		if (thumb->hasSpoiler()) {
+			result.emplace(i);
+		}
+		++i;
+	}
+	return result;
+}
+
+bool AlbumPreview::canHaveSpoiler(int index) const {
+	return _sendWay.sendImagesAsPhotos();
+}
+
+void AlbumPreview::toggleSpoilers(bool enabled) {
+	for (auto &thumb : _thumbs) {
+		thumb->setSpoiler(enabled);
 	}
 }
 
@@ -108,8 +138,12 @@ void AlbumPreview::prepareThumbs(gsl::span<Ui::PreparedFile> items) {
 			items[i],
 			layout[i],
 			this,
+			[=] { update(); },
 			[=] { changeThumbByIndex(thumbIndex(thumbUnderCursor())); },
 			[=] { deleteThumbByIndex(thumbIndex(thumbUnderCursor())); }));
+		if (_thumbs.back()->isCompressedSticker()) {
+			_hasMixedFileHeights = true;
+		}
 	}
 	_thumbsHeight = countLayoutHeight(layout);
 	_photosHeight = ranges::accumulate(ranges::views::all(
@@ -118,9 +152,16 @@ void AlbumPreview::prepareThumbs(gsl::span<Ui::PreparedFile> items) {
 		return thumb->photoHeight();
 	}), 0) + (count - 1) * st::sendMediaRowSkip;
 
-	const auto &st = st::attachPreviewThumbLayout;
-	_filesHeight = count * st.thumbSize
-		+ (count - 1) * st::sendMediaRowSkip;
+	if (!_hasMixedFileHeights) {
+		_filesHeight = count * _thumbs.front()->fileHeight()
+			+ (count - 1) * st::sendMediaRowSkip;
+	} else {
+		_filesHeight = ranges::accumulate(ranges::views::all(
+			_thumbs
+		) | ranges::views::transform([](const auto &thumb) {
+			return thumb->fileHeight();
+		}), 0) + (count - 1) * st::sendMediaRowSkip;
+	}
 }
 
 int AlbumPreview::contentLeft() const {
@@ -143,7 +184,7 @@ AlbumThumbnail *AlbumPreview::findThumb(QPoint position) const {
 		} else {
 			const auto bottom = top + (isPhotosWay
 				? thumb->photoHeight()
-				: st::attachPreviewThumbLayout.thumbSize);
+				: thumb->fileHeight());
 			const auto isUnderTop = (position.y() > top);
 			top = bottom + skip;
 			return isUnderTop && (position.y() < bottom);
@@ -319,18 +360,40 @@ void AlbumPreview::paintPhotos(Painter &p, QRect clip) const {
 }
 
 void AlbumPreview::paintFiles(Painter &p, QRect clip) const {
-	const auto fileHeight = st::attachPreviewThumbLayout.thumbSize
-		+ st::sendMediaRowSkip;
-	const auto bottom = clip.y() + clip.height();
-	const auto from = std::clamp(clip.y() / fileHeight, 0, int(_thumbs.size()));
-	const auto till = std::clamp((bottom + fileHeight - 1) / fileHeight, 0, int(_thumbs.size()));
 	const auto left = (st::boxWideWidth - st::sendMediaPreviewSize) / 2;
 	const auto outerWidth = width();
+	if (!_hasMixedFileHeights) {
+		const auto fileHeight = st::attachPreviewThumbLayout.thumbSize
+			+ st::sendMediaRowSkip;
+		const auto bottom = clip.y() + clip.height();
+		const auto from = std::clamp(
+			clip.y() / fileHeight,
+			0,
+			int(_thumbs.size()));
+		const auto till = std::clamp(
+			(bottom + fileHeight - 1) / fileHeight,
+			0,
+			int(_thumbs.size()));
 
-	auto top = from * fileHeight;
-	for (auto i = from; i != till; ++i) {
-		_thumbs[i]->paintFile(p, left, top, outerWidth);
-		top += fileHeight;
+		auto top = from * fileHeight;
+		for (auto i = from; i != till; ++i) {
+			_thumbs[i]->paintFile(p, left, top, outerWidth);
+			top += fileHeight;
+		}
+	} else {
+		auto top = 0;
+		for (const auto &thumb : _thumbs) {
+			const auto bottom = top + thumb->fileHeight();
+			const auto guard = gsl::finally([&] {
+				top = bottom + st::sendMediaRowSkip;
+			});
+			if (top >= clip.y() + clip.height()) {
+				break;
+			} else if (bottom <= clip.y()) {
+				continue;
+			}
+			thumb->paintFile(p, left, top, outerWidth);
+		}
 	}
 }
 
@@ -353,15 +416,6 @@ void AlbumPreview::deleteThumbByIndex(int index) {
 	if (index < 0) {
 		return;
 	}
-	const auto orderIt = ranges::find(_order, index);
-	Expects(orderIt != _order.end());
-
-	_order.erase(orderIt);
-	ranges::for_each(_order, [=](auto &i) {
-		if (i > index) {
-			i--;
-		}
-	});
 	_thumbDeleted.fire(std::move(index));
 }
 
@@ -408,7 +462,8 @@ void AlbumPreview::mousePressEvent(QMouseEvent *e) {
 
 		const auto isAlbum = _sendWay.sendImagesAsPhotos()
 			&& _sendWay.groupFiles();
-		if (!isAlbum) {
+		if (!isAlbum || e->button() != Qt::LeftButton) {
+			_dragTimer.cancel();
 			return;
 		}
 
@@ -421,7 +476,7 @@ void AlbumPreview::mousePressEvent(QMouseEvent *e) {
 }
 
 void AlbumPreview::mouseMoveEvent(QMouseEvent *e) {
-	if (!_sendWay.sendImagesAsPhotos()) {
+	if (!_sendWay.sendImagesAsPhotos() && !_hasMixedFileHeights) {
 		applyCursor(style::cur_default);
 		return;
 	}
@@ -514,11 +569,37 @@ void AlbumPreview::mouseReleaseEvent(QMouseEvent *e) {
 	} else if (const auto thumb = base::take(_pressedThumb)) {
 		const auto was = _pressedButtonType;
 		const auto now = thumb->buttonTypeFromPoint(e->pos());
-		if (was == now) {
+		if (e->button() == Qt::RightButton) {
+			showContextMenu(thumb, e->globalPos());
+		} else if (was == now) {
 			thumbButtonsCallback(thumb, now);
 		}
 	}
 	_pressedButtonType = AttachButtonType::None;
+}
+
+void AlbumPreview::showContextMenu(
+		not_null<AlbumThumbnail*> thumb,
+		QPoint position) {
+	if (!_sendWay.sendImagesAsPhotos()) {
+		return;
+	}
+	_menu = base::make_unique_q<Ui::PopupMenu>(
+		this,
+		st::popupMenuWithIcons);
+
+	const auto spoilered = thumb->hasSpoiler();
+	_menu->addAction(spoilered
+		? tr::lng_context_disable_spoiler(tr::now)
+		: tr::lng_context_spoiler_effect(tr::now), [=] {
+		thumb->setSpoiler(!spoilered);
+	}, spoilered ? &st::menuIconSpoilerOff : &st::menuIconSpoiler);
+
+	if (_menu->empty()) {
+		_menu = nullptr;
+	} else {
+		_menu->popup(position);
+	}
 }
 
 void AlbumPreview::switchToDrag() {

@@ -34,13 +34,12 @@ public:
 
 	void handleKeyPress(not_null<QKeyEvent*> e) override;
 
-protected:
+private:
 	QPoint prepareRippleStartPosition() const override;
 	QImage prepareRippleMask() const override;
 
 	int contentHeight() const override;
 
-private:
 	void prepare();
 	void refreshAutoDeleteText();
 	void paint(Painter &p);
@@ -213,7 +212,7 @@ QPoint ActionWithTimer::prepareRippleStartPosition() const {
 }
 
 QImage ActionWithTimer::prepareRippleMask() const {
-	return Ui::RippleAnimation::rectMask(size());
+	return Ui::RippleAnimation::RectMask(size());
 }
 
 int ActionWithTimer::contentHeight() const {

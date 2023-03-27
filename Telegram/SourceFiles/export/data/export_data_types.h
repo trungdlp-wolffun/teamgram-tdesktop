@@ -431,7 +431,10 @@ struct ActionCustomAction {
 };
 
 struct ActionBotAllowed {
+	uint64 appId = 0;
+	Utf8String app;
 	Utf8String domain;
+	bool attachMenu = false;
 };
 
 struct ActionSecureValuesSent {
@@ -499,6 +502,24 @@ struct ActionGiftPremium {
 	int months;
 };
 
+struct ActionTopicCreate {
+	Utf8String title;
+};
+
+struct ActionTopicEdit {
+	Utf8String title;
+	std::optional<uint64> iconEmojiId = 0;
+};
+
+struct ActionSuggestProfilePhoto {
+	Photo photo;
+};
+
+struct ActionRequestedPeer {
+	PeerId peerId = 0;
+	int buttonId = 0;
+};
+
 struct ServiceAction {
 	std::variant<
 		v::null_t,
@@ -531,7 +552,11 @@ struct ServiceAction {
 		ActionSetChatTheme,
 		ActionChatJoinedByRequest,
 		ActionWebViewDataSent,
-		ActionGiftPremium> content;
+		ActionGiftPremium,
+		ActionTopicCreate,
+		ActionTopicEdit,
+		ActionSuggestProfilePhoto,
+		ActionRequestedPeer> content;
 };
 
 ServiceAction ParseServiceAction(

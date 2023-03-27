@@ -25,6 +25,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/chat/chat_style.h"
 #include "ui/cached_round_corners.h"
 #include "ui/painter.h"
+#include "ui/power_saving.h"
 #include "data/data_session.h"
 #include "data/data_wall_paper.h"
 #include "data/data_media_types.h"
@@ -60,16 +61,19 @@ std::vector<std::unique_ptr<Data::Media>> PrepareCollageMedia(
 	auto result = std::vector<std::unique_ptr<Data::Media>>();
 	result.reserve(data.items.size());
 	for (const auto &item : data.items) {
+		const auto spoiler = false;
 		if (const auto document = std::get_if<DocumentData*>(&item)) {
 			const auto skipPremiumEffect = false;
 			result.push_back(std::make_unique<Data::MediaFile>(
 				parent,
 				*document,
-				skipPremiumEffect));
+				skipPremiumEffect,
+				spoiler));
 		} else if (const auto photo = std::get_if<PhotoData*>(&item)) {
 			result.push_back(std::make_unique<Data::MediaPhoto>(
 				parent,
-				*photo));
+				*photo,
+				spoiler));
 		} else {
 			return {};
 		}
@@ -116,7 +120,7 @@ QSize WebPage::countOptimalSize() {
 				if (result.endsWith('/')) {
 					result.chop(1);
 				}
-				const auto prefixes = { qstr("http://"), qstr("https://") };
+				const auto prefixes = { u"http://"_q, u"https://"_q };
 				for (const auto &prefix : prefixes) {
 					if (result.startsWith(prefix)) {
 						result = result.mid(prefix.size());
@@ -163,11 +167,12 @@ QSize WebPage::countOptimalSize() {
 	} else if (!_data->document
 		&& _data->photo
 		&& _data->type != WebPageType::Photo
+		&& _data->type != WebPageType::Document
 		&& _data->type != WebPageType::Video) {
 		if (_data->type == WebPageType::Profile) {
 			_asArticle = true;
-		} else if (_data->siteName == qstr("Twitter")
-			|| _data->siteName == qstr("Facebook")
+		} else if (_data->siteName == u"Twitter"_q
+			|| _data->siteName == u"Facebook"_q
 			|| _data->type == WebPageType::ArticleWithIV) {
 			_asArticle = false;
 		} else {
@@ -216,9 +221,9 @@ QSize WebPage::countOptimalSize() {
 			.session = &history()->session(),
 			.customEmojiRepaint = [=] { _parent->customEmojiRepaint(); },
 		};
-		if (_data->siteName == qstr("Twitter")) {
+		if (_data->siteName == u"Twitter"_q) {
 			context.type = MarkedTextContext::HashtagMentionType::Twitter;
-		} else if (_data->siteName == qstr("Instagram")) {
+		} else if (_data->siteName == u"Instagram"_q) {
 			context.type = MarkedTextContext::HashtagMentionType::Instagram;
 		}
 		_description.setMarkedText(
@@ -536,7 +541,7 @@ void WebPage::draw(Painter &p, const PaintContext &context) const {
 				p,
 				style::rtlrect(padding.left() + paintw - pw, tshift, pw, _pixh, width()),
 				st->msgSelectOverlay(),
-				st->msgSelectOverlayCornersSmall());
+				st->msgSelectOverlayCorners(Ui::CachedCornerRadius::Small));
 		}
 		paintw -= pw + st::webPagePhotoDelta;
 	}
@@ -574,7 +579,8 @@ void WebPage::draw(Painter &p, const PaintContext &context) const {
 			.availableWidth = paintw,
 			.spoiler = Ui::Text::DefaultSpoilerCache(),
 			.now = context.now,
-			.paused = context.paused,
+			.pausedEmoji = context.paused || On(PowerSaving::kEmojiChat),
+			.pausedSpoiler = context.paused || On(PowerSaving::kChatSpoiler),
 			.selection = toDescriptionSelection(context.selection),
 			.elisionLines = std::max(_descriptionLines, 0),
 			.elisionRemoveFromEnd = (_descriptionLines > 0) ? endskip : 0,
@@ -607,7 +613,7 @@ void WebPage::draw(Painter &p, const PaintContext &context) const {
 			&& _data->photo
 			&& !_data->document) {
 			if (_attach->isReadyForOpen()) {
-				if (_data->siteName == qstr("YouTube")) {
+				if (_data->siteName == u"YouTube"_q) {
 					st->youtubeIcon().paint(p, (pixwidth - st::youtubeIcon.width()) / 2, (pixheight - st::youtubeIcon.height()) / 2, width());
 				} else {
 					st->videoIcon().paint(p, (pixwidth - st::videoIcon.width()) / 2, (pixheight - st::videoIcon.height()) / 2, width());
@@ -752,8 +758,9 @@ ClickHandlerPtr WebPage::replaceAttachLink(
 			|| _data->type == WebPageType::Video) {
 			return _openl;
 		} else if (_data->type == WebPageType::Photo
-			|| _data->siteName == qstr("Twitter")
-			|| _data->siteName == qstr("Facebook")) {
+			|| _data->type == WebPageType::Document
+			|| _data->siteName == u"Twitter"_q
+			|| _data->siteName == u"Facebook"_q) {
 			// leave photo link
 		} else {
 			return _openl;

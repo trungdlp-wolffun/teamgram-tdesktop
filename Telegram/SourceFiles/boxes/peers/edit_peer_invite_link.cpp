@@ -32,7 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "boxes/share_box.h"
 #include "history/view/history_view_group_call_bar.h" // GenerateUserpics...
-#include "history/history_message.h" // GetErrorTextForSending.
+#include "history/history_item_helpers.h" // GetErrorTextForSending.
 #include "history/history.h"
 #include "ui/boxes/confirm_box.h"
 #include "boxes/peer_list_box.h"
@@ -409,7 +409,7 @@ void Controller::addHeaderBlock(not_null<Ui::VerticalLayout*> container) {
 		return result;
 	};
 
-	const auto prefix = qstr("https://");
+	const auto prefix = u"https://"_q;
 	const auto label = container->lifetime().make_state<Ui::InviteLinkLabel>(
 		container,
 		rpl::single(link.startsWith(prefix)
@@ -982,7 +982,7 @@ void AddPermanentLinkBlock(
 
 	auto link = value->value(
 	) | rpl::map([=](const LinkData &data) {
-		const auto prefix = qstr("https://");
+		const auto prefix = u"https://"_q;
 		return data.link.startsWith(prefix)
 			? data.link.mid(prefix.size())
 			: data.link;
@@ -1042,11 +1042,12 @@ void AddPermanentLinkBlock(
 		state->allUserpicsLoaded = ranges::all_of(
 			state->list,
 			[](const HistoryView::UserpicInRow &element) {
-				return !element.peer->hasUserpic() || element.view->image();
+				return !element.peer->hasUserpic()
+					|| !Ui::PeerUserpicLoading(element.view);
 			});
 		state->content = Ui::JoinedCountContent{
 			.count = state->count,
-			.userpics = state->cachedUserpics
+			.userpics = state->cachedUserpics,
 		};
 	};
 	value->value(
@@ -1087,7 +1088,7 @@ void AddPermanentLinkBlock(
 			} else if (element.peer->userpicUniqueKey(element.view)
 				!= element.uniqueKey) {
 				pushing = true;
-			} else if (!element.view->image()) {
+			} else if (Ui::PeerUserpicLoading(element.view)) {
 				state->allUserpicsLoaded = false;
 			}
 		}
@@ -1141,7 +1142,7 @@ object_ptr<Ui::BoxContent> ShareInviteLinkBox(
 		showToast(tr::lng_group_invite_copied(tr::now));
 	};
 	auto submitCallback = [=](
-			std::vector<not_null<PeerData*>> &&result,
+			std::vector<not_null<Data::Thread*>> &&result,
 			TextWithTags &&comment,
 			Api::SendOptions options,
 			Data::ForwardOptions) {
@@ -1150,13 +1151,12 @@ object_ptr<Ui::BoxContent> ShareInviteLinkBox(
 		}
 
 		const auto error = [&] {
-			for (const auto peer : result) {
+			for (const auto thread : result) {
 				const auto error = GetErrorTextForSending(
-					peer,
-					{},
-					comment);
+					thread,
+					{ .text = &comment });
 				if (!error.isEmpty()) {
-					return std::make_pair(error, peer);
+					return std::make_pair(error, thread);
 				}
 			}
 			return std::make_pair(QString(), result.front());
@@ -1165,7 +1165,7 @@ object_ptr<Ui::BoxContent> ShareInviteLinkBox(
 			auto text = TextWithEntities();
 			if (result.size() > 1) {
 				text.append(
-					Ui::Text::Bold(error.second->name())
+					Ui::Text::Bold(error.second->chatListName())
 				).append("\n\n");
 			}
 			text.append(error.first);
@@ -1187,12 +1187,10 @@ object_ptr<Ui::BoxContent> ShareInviteLinkBox(
 		} else {
 			comment.text = link;
 		}
-		const auto owner = &peer->owner();
 		auto &api = peer->session().api();
-		for (const auto peer : result) {
-			const auto history = owner->history(peer);
+		for (const auto thread : result) {
 			auto message = Api::MessageToSend(
-				Api::SendAction(history, options));
+				Api::SendAction(thread, options));
 			message.textWithTags = comment;
 			message.action.clearDraft = false;
 			api.sendMessage(std::move(message));
@@ -1202,11 +1200,14 @@ object_ptr<Ui::BoxContent> ShareInviteLinkBox(
 			(*box)->closeBox();
 		}
 	};
+	auto filterCallback = [](not_null<Data::Thread*> thread) {
+		return Data::CanSendTexts(thread);
+	};
 	auto object = Box<ShareBox>(ShareBox::Descriptor{
 		.session = &peer->session(),
 		.copyCallback = std::move(copyCallback),
 		.submitCallback = std::move(submitCallback),
-		.filterCallback = [](auto peer) { return peer->canWrite(); },
+		.filterCallback = std::move(filterCallback),
 	});
 	*box = Ui::MakeWeak(object.data());
 	return object;
@@ -1376,7 +1377,7 @@ QString PrepareRequestedRowStatus(TimeId date) {
 	const auto now = QDateTime::currentDateTime();
 	const auto parsed = base::unixtime::parse(date);
 	const auto parsedDate = parsed.date();
-	const auto time = parsed.time().toString(cTimeFormat());
+	const auto time = QLocale().toString(parsed.time(), QLocale::ShortFormat);
 	const auto generic = [&] {
 		return tr::lng_group_requests_status_date_time(
 			tr::now,

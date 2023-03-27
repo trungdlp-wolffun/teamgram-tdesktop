@@ -69,6 +69,7 @@ bool UrlRequiresConfirmation(const QUrl &url) {
 		"|t\\.me"
 		"|te\\.?legra\\.ph"
 		"|graph\\.org"
+		"|fragment\\.com"
 		"|telesco\\.pe"
 		")$",
 		url.host(),
@@ -76,23 +77,24 @@ bool UrlRequiresConfirmation(const QUrl &url) {
 }
 
 QString HiddenUrlClickHandler::copyToClipboardText() const {
-	return url().startsWith(qstr("internal:url:"))
-		? url().mid(qstr("internal:url:").size())
+	return url().startsWith(u"internal:url:"_q)
+		? url().mid(u"internal:url:"_q.size())
 		: url();
 }
 
 QString HiddenUrlClickHandler::copyToClipboardContextItemText() const {
 	return url().isEmpty()
 		? QString()
-		: !url().startsWith(qstr("internal:"))
+		: !url().startsWith(u"internal:"_q)
 		? UrlClickHandler::copyToClipboardContextItemText()
-		: url().startsWith(qstr("internal:url:"))
+		: url().startsWith(u"internal:url:"_q)
 		? UrlClickHandler::copyToClipboardContextItemText()
 		: QString();
 }
 
 QString HiddenUrlClickHandler::dragText() const {
-	return HiddenUrlClickHandler::copyToClipboardText();
+	const auto result = HiddenUrlClickHandler::copyToClipboardText();
+	return result.startsWith(u"internal:"_q) ? QString() : result;
 }
 
 void HiddenUrlClickHandler::Open(QString url, QVariant context) {
@@ -104,9 +106,13 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 	const auto open = [=] {
 		UrlClickHandler::Open(url, context);
 	};
-	if (url.startsWith(qstr("tg2://"), Qt::CaseInsensitive)
-		|| url.startsWith(qstr("internal:"), Qt::CaseInsensitive)) {
-		open();
+	if (url.startsWith(u"tg2://"_q, Qt::CaseInsensitive)
+		|| url.startsWith(u"internal2:"_q, Qt::CaseInsensitive)) {
+		UrlClickHandler::Open(url, QVariant::fromValue([&] {
+			auto result = context.value<ClickHandlerContext>();
+			result.mayShowConfirmation = !base::IsCtrlPressed();
+			return result;
+		}()));
 	} else {
 		const auto parsedUrl = QUrl::fromUserInput(url);
 		if (UrlRequiresConfirmation(parsedUrl) && !base::IsCtrlPressed()) {
@@ -157,7 +163,7 @@ void BotGameUrlClickHandler::onClick(ClickContext context) const {
 	const auto open = [=] {
 		UrlClickHandler::Open(url, context.other);
 	};
-	if (url.startsWith(qstr("tg2://"), Qt::CaseInsensitive)) {
+	if (url.startsWith(u"tg2://"_q, Qt::CaseInsensitive)) {
 		open();
 	} else if (!_bot
 		|| _bot->isVerified()

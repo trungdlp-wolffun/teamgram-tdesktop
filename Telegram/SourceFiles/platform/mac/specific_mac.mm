@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_controller.h"
 #include "mainwindow.h"
 #include "history/history_location_manager.h"
+#include "base/platform/mac/base_confirm_quit.h"
 #include "base/platform/mac/base_utilities_mac.h"
 #include "base/platform/base_platform_info.h"
 
@@ -35,12 +36,50 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <mach-o/dyld.h>
 #include <AVFoundation/AVFoundation.h>
 
-void psActivateProcess(uint64 pid) {
-	if (!pid) {
-		const auto window = Core::App().activeWindow();
-		objc_activateProgram(window ? window->widget()->winId() : 0);
-	}
+namespace {
+
+[[nodiscard]] QImage ImageFromNS(NSImage *icon) {
+	CGImageRef image = [icon CGImageForProposedRect:NULL context:nil hints:nil];
+
+	const int width = CGImageGetWidth(image);
+	const int height = CGImageGetHeight(image);
+	auto result = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+	result.fill(Qt::transparent);
+
+	CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+	CGBitmapInfo info = CGBitmapInfo(kCGImageAlphaPremultipliedFirst) | kCGBitmapByteOrder32Host;
+	CGContextRef context = CGBitmapContextCreate(
+		result.bits(),
+		width,
+		height,
+		8,
+		result.bytesPerLine(),
+		space,
+		info);
+
+	CGRect rect = CGRectMake(0, 0, width, height);
+	CGContextDrawImage(context, rect, image);
+
+	CFRelease(space);
+	CFRelease(context);
+
+	return result;
 }
+
+[[nodiscard]] QImage ResolveBundleIconDefault() {
+	NSString *path = [[NSBundle mainBundle] bundlePath];
+	NSString *icon = [path stringByAppendingString:@"/Contents/Resources/Icon.icns"];
+	NSImage *image = [[NSImage alloc] initWithContentsOfFile:icon];
+	if (!image) {
+		return Window::Logo();
+	}
+
+	auto result = ImageFromNS(image);
+	[image release];
+	return result;
+}
+
+} // namespace
 
 QString psAppDataPath() {
 	return objc_appDataPath();
@@ -79,7 +118,7 @@ void finish() {
 
 QString SingleInstanceLocalServerName(const QString &hash) {
 #ifndef OS_MAC_STORE
-	return qsl("/tmp/") + hash + '-' + cGUIDStr();
+	return u"/tmp/"_q + hash + '-' + cGUIDStr();
 #else // OS_MAC_STORE
 	return objc_documentsPath() + hash.left(4);
 #endif // OS_MAC_STORE
@@ -194,6 +233,29 @@ bool AutostartSkip() {
 void NewVersionLaunched(int oldVersion) {
 }
 
+QImage DefaultApplicationIcon() {
+	static auto result = ResolveBundleIconDefault();
+	return result;
+}
+
+bool PreventsQuit(Core::QuitReason reason) {
+	// Thanks Chromium, see
+	// chromium.org/developers/design-documents/confirm-to-quit-experiment
+	return (reason == Core::QuitReason::QtQuitEvent)
+		&& Core::App().settings().macWarnBeforeQuit()
+		&& ([[NSApp currentEvent] type] == NSEventTypeKeyDown)
+		&& !ConfirmQuit::RunModal(
+			tr::lng_mac_hold_to_quit(
+				tr::now,
+				lt_text,
+				ConfirmQuit::QuitKeysString()));
+}
+
+void ActivateThisProcess() {
+	const auto window = Core::App().activeWindow();
+	objc_activateProgram(window ? window->widget()->winId() : 0);
+}
+
 } // namespace Platform
 
 void psSendToMenu(bool send, bool silent) {
@@ -208,7 +270,7 @@ QByteArray psDownloadPathBookmark(const QString &path) {
 }
 
 bool psLaunchMaps(const Data::LocationPoint &point) {
-	return QDesktopServices::openUrl(qsl("https://maps.apple.com/?q=Point&z=16&ll=%1,%2").arg(point.latAsString()).arg(point.lonAsString()));
+	return QDesktopServices::openUrl(u"https://maps.apple.com/?q=Point&z=16&ll=%1,%2"_q.arg(point.latAsString()).arg(point.lonAsString()));
 }
 
 QString strNotificationAboutThemeChange() {

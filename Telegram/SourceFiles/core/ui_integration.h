@@ -29,6 +29,7 @@ struct MarkedTextContext {
 	Main::Session *session = nullptr;
 	HashtagMentionType type = HashtagMentionType::Telegram;
 	Fn<void()> customEmojiRepaint;
+	int customEmojiLoopLimit = 0;
 };
 
 class UiIntegration final : public Ui::Integration {
@@ -45,7 +46,6 @@ public:
 	void activationFromTopPanel() override;
 
 	bool screenIsLocked() override;
-	QString timeFormat() override;
 
 	std::shared_ptr<ClickHandler> createLinkHandler(
 		const EntityLinkData &data,

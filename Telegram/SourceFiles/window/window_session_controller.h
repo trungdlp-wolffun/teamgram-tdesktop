@@ -9,7 +9,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/flags.h"
 #include "base/object_ptr.h"
-#include "base/observer.h"
 #include "base/weak_ptr.h"
 #include "base/timer.h"
 #include "boxes/gift_premium_box.h" // GiftPremiumValidator.
@@ -69,6 +68,9 @@ class MessageSendingAnimationController;
 namespace Data {
 struct CloudTheme;
 enum class CloudThemeType;
+class Thread;
+class Forum;
+class ForumTopic;
 } // namespace Data
 
 namespace HistoryView::Reactions {
@@ -95,6 +97,7 @@ inline constexpr bool is_flag_type(GifPauseReason) { return true; };
 
 enum class ResolveType {
 	Default,
+	BotApp,
 	BotStart,
 	AddToGroup,
 	AddToChannel,
@@ -118,6 +121,7 @@ public:
 
 private:
 	Dialogs::Key _chat;
+	base::weak_ptr<Data::ForumTopic> _weak;
 	QDate _date;
 
 };
@@ -149,12 +153,17 @@ struct SectionShow {
 	, activation(activation) {
 	}
 
-	SectionShow withWay(Way newWay) const {
+	[[nodiscard]] SectionShow withWay(Way newWay) const {
 		return SectionShow(newWay, animated, activation);
 	}
-	SectionShow withThirdColumn() const {
+	[[nodiscard]] SectionShow withThirdColumn() const {
 		auto copy = *this;
 		copy.thirdColumn = true;
+		return copy;
+	}
+	[[nodiscard]] SectionShow withChildColumn() const {
+		auto copy = *this;
+		copy.childColumn = true;
 		return copy;
 	}
 
@@ -162,6 +171,8 @@ struct SectionShow {
 	anim::type animated = anim::type::normal;
 	anim::activation activation = anim::activation::normal;
 	bool thirdColumn = false;
+	bool childColumn = false;
+	bool reapplyLocalDraft = false;
 	Origin origin;
 
 };
@@ -198,6 +209,8 @@ public:
 		QString startToken;
 		ChatAdminRights startAdminRights;
 		bool startAutoSubmit = false;
+		QString botAppName;
+		bool botAppForceConfirmation = false;
 		QString attachBotUsername;
 		std::optional<QString> attachBotToggleCommand;
 		InlineBots::PeerTypes attachBotChooseTypes;
@@ -211,6 +224,14 @@ public:
 		MsgId rootId,
 		MsgId commentId = 0,
 		const SectionShow &params = SectionShow());
+	void showTopic(
+		not_null<Data::ForumTopic*> topic,
+		MsgId itemId = 0,
+		const SectionShow &params = SectionShow());
+	void showThread(
+		not_null<Data::Thread*> thread,
+		MsgId itemId = 0,
+		const SectionShow &params = SectionShow());
 
 	void showPeerInfo(
 		PeerId peerId,
@@ -219,7 +240,7 @@ public:
 		not_null<PeerData*> peer,
 		const SectionShow &params = SectionShow());
 	void showPeerInfo(
-		not_null<History*> history,
+		not_null<Data::Thread*> thread,
 		const SectionShow &params = SectionShow());
 
 	virtual void showPeerHistory(
@@ -268,6 +289,9 @@ private:
 		const MTPcontacts_ResolvedPeer &result,
 		Fn<void(not_null<PeerData*>)> done);
 
+	void showMessageByLinkResolved(
+		not_null<HistoryItem*> item,
+		const PeerByLinkInfo &info);
 	void showPeerByLinkResolved(
 		not_null<PeerData*> peer,
 		const PeerByLinkInfo &info);
@@ -306,15 +330,6 @@ public:
 		return *_emojiInteractions;
 	}
 
-	// We need access to this from MainWidget::MainWidget, where
-	// we can't call content() yet.
-	void setSelectingPeer(bool selecting) {
-		_selectingPeer = selecting;
-	}
-	[[nodiscard]] bool selectingPeer() const {
-		return _selectingPeer;
-	}
-
 	void setConnectingBottomSkip(int skip);
 	rpl::producer<int> connectingBottomSkipValue() const;
 
@@ -326,8 +341,9 @@ public:
 		object_ptr<Ui::BoxContent> content,
 		Ui::LayerOptions options = Ui::LayerOption::KeepOther,
 		anim::type animated = anim::type::normal);
-
 	void hideLayer(anim::type animated = anim::type::normal);
+
+	void showToast(TextWithEntities &&text);
 
 	[[nodiscard]] auto sendingAnimation() const
 	-> Ui::MessageSendingAnimationController &;
@@ -340,9 +356,16 @@ public:
 	// is changed in the Dialogs::Widget of the current window.
 	rpl::variable<Dialogs::Key> searchInChat;
 	bool uniqueChatsInSearchResults() const;
+
 	void openFolder(not_null<Data::Folder*> folder);
 	void closeFolder();
 	const rpl::variable<Data::Folder*> &openedFolder() const;
+
+	void showForum(
+		not_null<Data::Forum*> forum,
+		const SectionShow &params = SectionShow::Way::ClearStack);
+	void closeForum();
+	const rpl::variable<Data::Forum*> &shownForum() const;
 
 	void setActiveChatEntry(Dialogs::RowDescriptor row);
 	void setActiveChatEntry(Dialogs::Key key);
@@ -353,6 +376,17 @@ public:
 	rpl::producer<Dialogs::RowDescriptor> activeChatEntryValue() const;
 	rpl::producer<Dialogs::Key> activeChatValue() const;
 	bool jumpToChatListEntry(Dialogs::RowDescriptor row);
+
+	void setCurrentDialogsEntryState(Dialogs::EntryState state);
+	[[nodiscard]] Dialogs::EntryState currentDialogsEntryState() const;
+	bool switchInlineQuery(
+		Dialogs::EntryState to,
+		not_null<UserData*> bot,
+		const QString &query);
+	bool switchInlineQuery(
+		not_null<Data::Thread*> thread,
+		not_null<UserData*> bot,
+		const QString &query);
 
 	[[nodiscard]] Dialogs::RowDescriptor resolveChatNext(
 		Dialogs::RowDescriptor from = {}) const;
@@ -369,6 +403,9 @@ public:
 	}
 	bool isGifPausedAtLeastFor(GifPauseReason reason) const;
 	void floatPlayerAreaUpdated();
+
+	void materializeLocalDrafts();
+	[[nodiscard]] rpl::producer<> materializeLocalDraftsRequests() const;
 
 	struct ColumnLayout {
 		int bodyWidth = 0;
@@ -390,6 +427,7 @@ public:
 	[[nodiscard]] bool canShowSeparateWindow(not_null<PeerData*> peer) const;
 	void showPeer(not_null<PeerData*> peer, MsgId msgId = ShowAtUnreadMsgId);
 
+	void startOrJoinGroupCall(not_null<PeerData*> peer);
 	void startOrJoinGroupCall(
 		not_null<PeerData*> peer,
 		Calls::StartGroupCallArgs args);
@@ -406,7 +444,9 @@ public:
 		const SectionShow &params = SectionShow::Way::ClearStack,
 		MsgId msgId = ShowAtUnreadMsgId) override;
 
-	void showPeerHistoryAtItem(not_null<const HistoryItem*> item);
+	void showMessage(
+		not_null<const HistoryItem*> item,
+		const SectionShow &params = SectionShow::Way::ClearStack);
 	void cancelUploadLayer(not_null<HistoryItem*> item);
 
 	void showLayer(
@@ -422,6 +462,7 @@ public:
 		showSpecialLayer(nullptr, animated);
 	}
 	void removeLayerBlackout();
+	[[nodiscard]] bool isLayerShown() const;
 
 	void showCalendar(
 		Dialogs::Key chat,
@@ -434,11 +475,15 @@ public:
 	void showPassportForm(const Passport::FormRequest &request);
 	void clearPassportForm();
 
-	void openPhoto(not_null<PhotoData*> photo, FullMsgId contextId);
+	void openPhoto(
+		not_null<PhotoData*> photo,
+		FullMsgId contextId,
+		MsgId topicRootId);
 	void openPhoto(not_null<PhotoData*> photo, not_null<PeerData*> peer);
 	void openDocument(
 		not_null<DocumentData*> document,
 		FullMsgId contextId,
+		MsgId topicRootId,
 		bool showInMediaView = false);
 
 	void showChooseReportMessages(
@@ -447,19 +492,30 @@ public:
 		Fn<void(MessageIdsList)> done);
 	void clearChooseReportMessages();
 
+	void showInNewWindow(
+		not_null<PeerData*> peer,
+		MsgId msgId = ShowAtUnreadMsgId);
+
 	void toggleChooseChatTheme(not_null<PeerData*> peer);
 
-	base::Variable<bool> &dialogsListFocused() {
-		return _dialogsListFocused;
+	[[nodiscard]] bool dialogsListFocused() const {
+		return _dialogsListFocused.current();
 	}
-	const base::Variable<bool> &dialogsListFocused() const {
-		return _dialogsListFocused;
+	[[nodiscard]] rpl::producer<bool> dialogsListFocusedChanges() const {
+		return _dialogsListFocused.changes();
 	}
-	base::Variable<bool> &dialogsListDisplayForced() {
-		return _dialogsListDisplayForced;
+	void setDialogsListFocused(bool value) {
+		_dialogsListFocused = value;
 	}
-	const base::Variable<bool> &dialogsListDisplayForced() const {
-		return _dialogsListDisplayForced;
+	[[nodiscard]] bool dialogsListDisplayForced() const {
+		return _dialogsListDisplayForced.current();
+	}
+	[[nodiscard]] auto dialogsListDisplayForcedChanges() const
+	-> rpl::producer<bool> {
+		return _dialogsListDisplayForced.changes();
+	}
+	void setDialogsListDisplayForced(bool value) {
+		_dialogsListDisplayForced = value;
 	}
 
 	not_null<SessionController*> parentController() override {
@@ -469,7 +525,9 @@ public:
 	[[nodiscard]] int filtersWidth() const;
 	[[nodiscard]] rpl::producer<FilterId> activeChatsFilter() const;
 	[[nodiscard]] FilterId activeChatsFilterCurrent() const;
-	void setActiveChatsFilter(FilterId id);
+	void setActiveChatsFilter(
+		FilterId id,
+		const SectionShow &params = SectionShow::Way::ClearStack);
 
 	void toggleFiltersMenu(bool enabled);
 	[[nodiscard]] rpl::producer<> filtersMenuChanged() const;
@@ -514,10 +572,16 @@ public:
 		return *_cachedReactionIconFactory;
 	}
 
+	[[nodiscard]] QString authedName() const {
+		return _authedName;
+	}
+
 	void setPremiumRef(const QString &ref);
 	[[nodiscard]] QString premiumRef() const;
 
-	rpl::lifetime &lifetime() {
+	[[nodiscard]] bool contentOverlapped(QWidget *w, QPaintEvent *e);
+
+	[[nodiscard]] rpl::lifetime &lifetime() {
 		return _lifetime;
 	}
 
@@ -564,6 +628,8 @@ private:
 	const std::unique_ptr<ChatHelpers::EmojiInteractions> _emojiInteractions;
 	const bool _isPrimary = false;
 
+	QString _authedName;
+
 	using SendingAnimation = Ui::MessageSendingAnimationController;
 	const std::unique_ptr<SendingAnimation> _sendingAnimation;
 
@@ -577,12 +643,14 @@ private:
 	const std::unique_ptr<ChatHelpers::TabbedSelector> _tabbedSelector;
 
 	rpl::variable<Dialogs::RowDescriptor> _activeChatEntry;
-	base::Variable<bool> _dialogsListFocused = { false };
-	base::Variable<bool> _dialogsListDisplayForced = { false };
+	rpl::lifetime _activeHistoryLifetime;
+	rpl::variable<bool> _dialogsListFocused = false;
+	rpl::variable<bool> _dialogsListDisplayForced = false;
 	std::deque<Dialogs::RowDescriptor> _chatEntryHistory;
 	int _chatEntryHistoryPosition = -1;
 	bool _filtersActivated = false;
-	bool _selectingPeer = false;
+
+	Dialogs::EntryState _currentDialogsEntryState;
 
 	base::Timer _invitePeekTimer;
 
@@ -594,6 +662,8 @@ private:
 
 	PeerData *_showEditPeer = nullptr;
 	rpl::variable<Data::Folder*> _openedFolder;
+	rpl::variable<Data::Forum*> _shownForum;
+	rpl::lifetime _shownForumLifetime;
 
 	rpl::event_stream<> _filtersMenuChanged;
 
@@ -611,6 +681,8 @@ private:
 	GiftPremiumValidator _giftPremiumValidator;
 
 	QString _premiumRef;
+
+	rpl::event_stream<> _materializeLocalDraftsRequests;
 
 	rpl::lifetime _lifetime;
 

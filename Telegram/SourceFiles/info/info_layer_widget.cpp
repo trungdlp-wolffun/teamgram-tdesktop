@@ -15,6 +15,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/cached_round_corners.h"
 #include "window/section_widget.h"
+#include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "window/main_window.h"
 #include "main/main_session.h"
@@ -31,7 +32,7 @@ LayerWidget::LayerWidget(
 : _controller(controller)
 , _content(this, controller, Wrap::Layer, memento) {
 	setupHeightConsumers();
-	Core::App().replaceFloatPlayerDelegate(floatPlayerDelegate());
+	controller->window().replaceFloatPlayerDelegate(floatPlayerDelegate());
 }
 
 LayerWidget::LayerWidget(
@@ -40,7 +41,7 @@ LayerWidget::LayerWidget(
 : _controller(controller)
 , _content(memento->takeContent(this, Wrap::Layer)) {
 	setupHeightConsumers();
-	Core::App().replaceFloatPlayerDelegate(floatPlayerDelegate());
+	controller->window().replaceFloatPlayerDelegate(floatPlayerDelegate());
 }
 
 auto LayerWidget::floatPlayerDelegate()
@@ -50,6 +51,15 @@ auto LayerWidget::floatPlayerDelegate()
 
 not_null<Ui::RpWidget*> LayerWidget::floatPlayerWidget() {
 	return this;
+}
+
+void LayerWidget::floatPlayerToggleGifsPaused(bool paused) {
+	constexpr auto kReason = Window::GifPauseReason::RoundPlaying;
+	if (paused) {
+		_controller->enableGifPauseReason(kReason);
+	} else {
+		_controller->disableGifPauseReason(kReason);
+	}
 }
 
 auto LayerWidget::floatPlayerGetSection(Window::Column column)
@@ -73,7 +83,7 @@ bool LayerWidget::floatPlayerIsVisible(not_null<HistoryItem*> item) {
 
 void LayerWidget::floatPlayerDoubleClickEvent(
 		not_null<const HistoryItem*> item) {
-	_controller->showPeerHistoryAtItem(item);
+	_controller->showMessage(item);
 }
 
 void LayerWidget::setupHeightConsumers() {
@@ -326,14 +336,16 @@ void LayerWidget::paintEvent(QPaintEvent *e) {
 
 	const auto clip = e->rect();
 	const auto radius = st::boxRadius;
-	auto parts = RectPart::None | 0;
+	const auto &corners = Ui::CachedCornerPixmaps(Ui::BoxCorners);
 	if (!_tillBottom) {
 		const auto bottom = QRect{ 0, height() - radius, width(), radius };
 		if (clip.intersects(bottom)) {
 			if (const auto rounding = _content->bottomSkipRounding()) {
 				rounding->paint(p, rect(), RectPart::FullBottom);
 			} else {
-				parts |= RectPart::FullBottom;
+				Ui::FillRoundRect(p, bottom, st::boxBg, {
+					.p = { QPixmap(), QPixmap(), corners.p[2], corners.p[3] }
+				});
 			}
 		}
 	} else if (!_contentTillBottom) {
@@ -342,26 +354,21 @@ void LayerWidget::paintEvent(QPaintEvent *e) {
 		p.fillRect(0, height() - radius, width(), radius, color);
 	}
 	if (_content->animatingShow()) {
-		if (clip.intersects({ 0, 0, width(), radius })) {
-			parts |= RectPart::FullTop;
+		const auto top = QRect{ 0, 0, width(), radius };
+		if (clip.intersects(top)) {
+			Ui::FillRoundRect(p, top, st::boxBg, {
+				.p = { corners.p[0], corners.p[1], QPixmap(), QPixmap() }
+			});
 		}
-		parts |= RectPart::Left | RectPart::Center | RectPart::Right;
-	}
-	if (parts) {
-		Ui::FillRoundRect(
-			p,
-			rect(),
-			st::boxBg,
-			Ui::BoxCorners,
-			nullptr,
-			parts);
+		p.fillRect(0, radius, width(), height() - 2 * radius, st::boxBg);
 	}
 }
 
 void LayerWidget::restoreFloatPlayerDelegate() {
 	if (!_floatPlayerDelegateRestored) {
 		_floatPlayerDelegateRestored = true;
-		Core::App().restoreFloatPlayerDelegate(floatPlayerDelegate());
+		_controller->window().restoreFloatPlayerDelegate(
+			floatPlayerDelegate());
 	}
 }
 
