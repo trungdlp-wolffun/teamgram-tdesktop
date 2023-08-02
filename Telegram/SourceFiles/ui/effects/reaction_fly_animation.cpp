@@ -67,7 +67,8 @@ ReactionFlyAnimation::ReactionFlyAnimation(
 	Data::CustomEmojiSizeTag customSizeTag)
 : _owner(owner)
 , _repaint(std::move(repaint))
-, _flyFrom(args.flyFrom) {
+, _flyFrom(args.flyFrom)
+, _scaleOutDuration(args.scaleOutDuration) {
 	const auto &list = owner->list(::Data::Reactions::Type::All);
 	auto centerIcon = (DocumentData*)nullptr;
 	auto aroundAnimation = (DocumentData*)nullptr;
@@ -106,6 +107,7 @@ ReactionFlyAnimation::ReactionFlyAnimation(
 		icon = MakeAnimatedIcon({
 			.generator = DocumentIconFrameGenerator(media),
 			.sizeOverride = QSize(size, size),
+			.colorized = media->owner()->emojiUsesTextColor(),
 		});
 		return true;
 	};
@@ -134,7 +136,26 @@ QRect ReactionFlyAnimation::paintGetArea(
 		const QColor &colored,
 		QRect clip,
 		crl::time now) const {
-	if (_flyIcon.isNull()) {
+	const auto scale = [&] {
+		const auto rate = _effect ? _effect->frameRate() : 0.;
+		if (!_scaleOutDuration || !rate) {
+			return 1.;
+		}
+		const auto left = _effect->framesCount() - _effect->frameIndex();
+		const auto duration = left * 1000. / rate;
+		return (duration < _scaleOutDuration)
+			? (duration / double(_scaleOutDuration))
+			: 1.;
+	}();
+	if (scale < 1.) {
+		const auto delta = ((1. - scale) / 2.) * target.size();
+		target = QRect(
+			target.topLeft() + QPoint(delta.width(), delta.height()),
+			target.size() * scale);
+	}
+	if (!_valid) {
+		return QRect();
+	} else if (_flyIcon.isNull()) {
 		const auto wide = QRect(
 			target.topLeft() - QPoint(target.width(), target.height()) / 2,
 			target.size() * 2);
@@ -146,7 +167,8 @@ QRect ReactionFlyAnimation::paintGetArea(
 		if (clip.isEmpty() || area.intersects(clip)) {
 			paintCenterFrame(p, target, colored, now);
 			if (const auto effect = _effect.get()) {
-				p.drawImage(wide, effect->frame());
+				// Must not be colored to text.
+				p.drawImage(wide, effect->frame(QColor()));
 			}
 			paintMiniCopies(p, target.center(), colored, now);
 		}
@@ -199,7 +221,7 @@ void ReactionFlyAnimation::paintCenterFrame(
 			target.y() + (target.height() - size.height()) / 2,
 			size.width(),
 			size.height());
-		p.drawImage(rect, _center->frame());
+		p.drawImage(rect, _center->frame(st::windowFg->c));
 	} else {
 		const auto scaled = (size.width() != _customSize);
 		_custom->paint(p, {

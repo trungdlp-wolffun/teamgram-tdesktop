@@ -404,7 +404,7 @@ if customRunCommand:
 stage('patches', """
     git clone https://github.com/desktop-app/patches.git
     cd patches
-    git checkout f61eb3406b
+    git checkout 3fad86d684
 """)
 
 stage('msys64', """
@@ -520,7 +520,7 @@ mac:
 """)
 
 stage('mozjpeg', """
-    git clone -b v4.0.3 https://github.com/mozilla/mozjpeg.git
+    git clone -b v4.1.3 https://github.com/mozilla/mozjpeg.git
     cd mozjpeg
 win:
     cmake . ^
@@ -673,15 +673,33 @@ mac:
 
 stage('dav1d', """
 win:
-    git clone -b 1.0.0 --depth 1 https://code.videolan.org/videolan/dav1d.git
+    git clone -b 1.2.1 --depth 1 https://code.videolan.org/videolan/dav1d.git
     cd dav1d
+
+    if "%X8664%" equ "x64" (
+        SET "TARGET=x86_64"
+    ) else (
+        SET "TARGET=x86"
+    )
+    set FILE=cross-file.txt
+    echo [binaries] > %FILE%
+    echo c = 'cl' >> %FILE%
+    echo cpp = 'cl' >> %FILE%
+    echo ar = 'lib' >> %FILE%
+    echo windres = 'rc' >> %FILE%
+    echo [host_machine] >> %FILE%
+    echo system = 'windows' >> %FILE%
+    echo cpu_family = '%TARGET%' >> %FILE%
+    echo cpu = '%TARGET%' >> %FILE%
+    echo endian = 'little'>> %FILE%
+
 depends:python/Scripts/activate.bat
     %THIRDPARTY_DIR%\\python\\Scripts\\activate.bat
-    meson setup --prefix %LIBS_DIR%/local --default-library=static --buildtype=debug -Denable_tools=false -Denable_tests=false -Db_vscrt=mtd builddir-debug
+    meson setup --cross-file %FILE% --prefix %LIBS_DIR%/local --default-library=static --buildtype=debug -Denable_tools=false -Denable_tests=false -Db_vscrt=mtd builddir-debug
     meson compile -C builddir-debug
     meson install -C builddir-debug
 release:
-    meson setup --prefix %LIBS_DIR%/local --default-library=static --buildtype=release -Denable_tools=false -Denable_tests=false -Db_vscrt=mt builddir-release
+    meson setup --cross-file %FILE% --prefix %LIBS_DIR%/local --default-library=static --buildtype=release -Denable_tools=false -Denable_tests=false -Db_vscrt=mt builddir-release
     meson compile -C builddir-release
     meson install -C builddir-release
 win:
@@ -710,7 +728,7 @@ release:
 
 stage('libde265', """
 win:
-    git clone --depth 1 -b v1.0.11 https://github.com/strukturag/libde265.git
+    git clone --depth 1 -b v1.0.12 https://github.com/strukturag/libde265.git
     cd libde265
     cmake . ^
         -A %WIN32X64% ^
@@ -734,7 +752,7 @@ release:
 
 stage('libheif', """
 win:
-    git clone --depth 1 -b v1.15.1 https://github.com/strukturag/libheif.git
+    git clone --depth 1 -b v1.16.2 https://github.com/strukturag/libheif.git
     cd libheif
     %THIRDPARTY_DIR%\\msys64\\usr\\bin\\sed.exe -i 's/LIBHEIF_EXPORTS/LIBDE265_STATIC_BUILD/g' libheif/CMakeLists.txt
     %THIRDPARTY_DIR%\\msys64\\usr\\bin\\sed.exe -i 's/HAVE_VISIBILITY/LIBHEIF_STATIC_BUILD/g' libheif/CMakeLists.txt
@@ -762,7 +780,7 @@ release:
 
 stage('libjxl', """
 win:
-    git clone -b v0.8.1 --depth 1 --recursive --shallow-submodules https://github.com/libjxl/libjxl.git
+    git clone -b v0.8.2 --depth 1 --recursive --shallow-submodules https://github.com/libjxl/libjxl.git
     cd libjxl
     cmake . ^
         -A %WIN32X64% ^
@@ -1215,30 +1233,30 @@ release:
 """)
 
 if buildQt5:
-    stage('qt_5_15_8', """
-    git clone https://github.com/qt/qt5.git qt_5_15_8
-    cd qt_5_15_8
+    stage('qt_5_15_9', """
+    git clone https://github.com/qt/qt5.git qt_5_15_9
+    cd qt_5_15_9
     perl init-repository --module-subset=qtbase,qtimageformats,qtsvg
-    git checkout v5.15.8-lts-lgpl
+    git checkout v5.15.9-lts-lgpl
     git submodule update qtbase qtimageformats qtsvg
-depends:patches/qtbase_5.15.8/*.patch
+depends:patches/qtbase_5.15.9/*.patch
     cd qtbase
 win:
-    for /r %%i in (..\\..\\patches\\qtbase_5.15.8\\*) do git apply %%i
+    for /r %%i in (..\\..\\patches\\qtbase_5.15.9\\*) do git apply %%i
     cd ..
 
     SET CONFIGURATIONS=-debug
 release:
     SET CONFIGURATIONS=-debug-and-release
 win:
-    """ + removeDir("\"%LIBS_DIR%\\Qt-5.15.8\"") + """
+    """ + removeDir("\"%LIBS_DIR%\\Qt-5.15.9\"") + """
     SET ANGLE_DIR=%LIBS_DIR%\\tg_angle
     SET ANGLE_LIBS_DIR=%ANGLE_DIR%\\out
     SET MOZJPEG_DIR=%LIBS_DIR%\\mozjpeg
     SET OPENSSL_DIR=%LIBS_DIR%\\openssl
     SET OPENSSL_LIBS_DIR=%OPENSSL_DIR%\\out
     SET ZLIB_LIBS_DIR=%LIBS_DIR%\\zlib
-    configure -prefix "%LIBS_DIR%\\Qt-5.15.8" ^
+    configure -prefix "%LIBS_DIR%\\Qt-5.15.9" ^
         %CONFIGURATIONS% ^
         -force-debug-info ^
         -opensource ^
@@ -1270,14 +1288,14 @@ win:
     jom -j16
     jom -j16 install
 mac:
-    find ../../patches/qtbase_5.15.8 -type f -print0 | sort -z | xargs -0 git apply
+    find ../../patches/qtbase_5.15.9 -type f -print0 | sort -z | xargs -0 git apply
     cd ..
 
     CONFIGURATIONS=-debug
 release:
     CONFIGURATIONS=-debug-and-release
 mac:
-    ./configure -prefix "$USED_PREFIX/Qt-5.15.8" \
+    ./configure -prefix "$USED_PREFIX/Qt-5.15.9" \
         $CONFIGURATIONS \
         -force-debug-info \
         -opensource \
@@ -1302,7 +1320,7 @@ if buildQt6:
 mac:
     git clone -b v6.3.2 https://code.qt.io/qt/qt5.git qt_6_3_2
     cd qt_6_3_2
-    perl init-repository --module-subset=qtbase,qtimageformats,qtsvg,qt5compat
+    perl init-repository --module-subset=qtbase,qtimageformats,qtsvg
 depends:patches/qtbase_6.3.2/*.patch
     cd qtbase
 
@@ -1335,9 +1353,9 @@ mac:
 stage('tg_owt', """
     git clone https://github.com/desktop-app/tg_owt.git
     cd tg_owt
-    git checkout 9b70d7679e
+    git checkout dcb5069ff7
     git submodule init
-    git submodule update src/third_party/libyuv src/third_party/crc32c/src src/third_party/abseil-cpp
+    git submodule update
 win:
     SET MOZJPEG_PATH=$LIBS_DIR/mozjpeg
     SET OPUS_PATH=$USED_PREFIX/include/opus

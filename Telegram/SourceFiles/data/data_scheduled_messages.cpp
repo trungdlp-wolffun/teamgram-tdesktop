@@ -40,7 +40,7 @@ constexpr auto kRequestTimeLimit = 60 * crl::time(1000);
 }
 
 [[nodiscard]] bool HasScheduledDate(not_null<HistoryItem*> item) {
-	return (item->date() != ScheduledMessages::kScheduledUntilOnlineTimestamp)
+	return (item->date() != Api::kScheduledUntilOnlineTimestamp)
 		&& (item->date() > base::unixtime::now());
 }
 
@@ -192,12 +192,13 @@ void ScheduledMessages::sendNowSimpleMessage(
 
 	const auto history = local->history();
 	auto action = Api::SendAction(history);
-	action.replyTo = local->replyToId();
+	action.replyTo = local->replyTo();
 	const auto replyHeader = NewMessageReplyHeader(action);
-	const auto localFlags = NewMessageFlags(history->peer);
+	const auto localFlags = NewMessageFlags(history->peer)
+		& ~MessageFlag::BeingSent;
 	const auto flags = MTPDmessage::Flag::f_entities
 		| MTPDmessage::Flag::f_from_id
-		| (local->replyToId()
+		| (action.replyTo
 			? MTPDmessage::Flag::f_reply_to
 			: MTPDmessage::Flag(0))
 		| (update.vttl_period()
