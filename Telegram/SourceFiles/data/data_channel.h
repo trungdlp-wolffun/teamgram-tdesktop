@@ -62,6 +62,9 @@ enum class ChannelDataFlag {
 	StoriesHidden = (1 << 26),
 	HasActiveStories = (1 << 27),
 	HasUnreadStories = (1 << 28),
+	CanGetStatistics = (1 << 29),
+	ViewAsMessages = (1 << 30),
+	SimilarExpanded = (1 << 31),
 };
 inline constexpr bool is_flag_type(ChannelDataFlag) { return true; };
 using ChannelDataFlags = base::flags<ChannelDataFlag>;
@@ -232,6 +235,9 @@ public:
 	[[nodiscard]] bool hasStoriesHidden() const {
 		return flags() & Flag::StoriesHidden;
 	}
+	[[nodiscard]] bool viewForumAsMessages() const {
+		return flags() & Flag::ViewAsMessages;
+	}
 
 	[[nodiscard]] static ChatRestrictionsInfo KickedRestrictedRights(
 		not_null<PeerData*> participant);
@@ -248,6 +254,7 @@ public:
 		not_null<PeerData*> participant,
 		ChatRestrictionsInfo oldRights,
 		ChatRestrictionsInfo newRights);
+	void setViewAsMessagesFlag(bool enabled);
 
 	void markForbidden();
 
@@ -456,6 +463,9 @@ public:
 
 	void processTopics(const MTPVector<MTPForumTopic> &topics);
 
+	[[nodiscard]] int levelHint() const;
+	void updateLevelHint(int levelHint);
+
 	// Still public data members.
 	uint64 access = 0;
 
@@ -490,6 +500,7 @@ private:
 	int _restrictedCount = 0;
 	int _kickedCount = 0;
 	int _pendingRequestsCount = 0;
+	int _levelHint = 0;
 	std::vector<UserId> _recentRequesters;
 	MsgId _availableMinId = 0;
 

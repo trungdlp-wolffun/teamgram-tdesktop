@@ -520,18 +520,37 @@ void Widget::chosenRow(const ChosenRow &row) {
 		}
 		return;
 	} else if (const auto topic = row.key.topic()) {
+		session().data().saveViewAsMessages(topic->forum(), false);
 		controller()->showThread(
 			topic,
 			row.message.fullId.msg,
 			Window::SectionShow::Way::ClearStack);
-	} else if (history && history->isForum() && !row.message.fullId) {
+	} else if (history
+		&& history->isForum()
+		&& !row.message.fullId
+		&& (!controller()->adaptive().isOneColumn()
+			|| !history->peer->forum()->channel()->viewForumAsMessages())) {
 		const auto forum = history->peer->forum();
 		if (controller()->shownForum().current() == forum) {
 			controller()->closeForum();
-		} else {
-			controller()->showForum(
-				forum,
-				Window::SectionShow().withChildColumn());
+			return;
+		}
+		controller()->showForum(
+			forum,
+			Window::SectionShow().withChildColumn());
+		if (forum->channel()->viewForumAsMessages()) {
+			controller()->showThread(
+				history,
+				ShowAtUnreadMsgId,
+				Window::SectionShow::Way::ClearStack);
+		} else if (!controller()->adaptive().isOneColumn()) {
+			const auto item = history->chatListMessage();
+			if (const auto topic = item ? item->topic() : nullptr) {
+				controller()->showThread(
+					topic,
+					ShowAtUnreadMsgId,
+					Window::SectionShow::Way::ClearStack);
+			}
 		}
 		return;
 	} else if (history) {
@@ -1744,6 +1763,7 @@ bool Widget::searchMessages(bool searchCache) {
 					(_searchQueryFrom
 						? _searchQueryFrom->input
 						: MTP_inputPeerEmpty()),
+					MTPInputPeer(), // saved_peer_id
 					MTP_int(topic ? topic->rootId() : 0),
 					MTP_inputMessagesFilterEmpty(),
 					MTP_int(0), // min_date
@@ -1985,6 +2005,7 @@ void Widget::searchMore() {
 					(_searchQueryFrom
 						? _searchQueryFrom->input
 						: MTP_inputPeerEmpty()),
+					MTPInputPeer(), // saved_peer_id
 					MTP_int(topic ? topic->rootId() : 0),
 					MTP_inputMessagesFilterEmpty(),
 					MTP_int(0), // min_date
@@ -2057,6 +2078,7 @@ void Widget::searchMore() {
 				(_searchQueryFrom
 					? _searchQueryFrom->input
 					: MTP_inputPeerEmpty()),
+				MTPInputPeer(), // saved_peer_id
 				MTPint(), // top_msg_id
 				MTP_inputMessagesFilterEmpty(),
 				MTP_int(0), // min_date
@@ -2673,7 +2695,7 @@ void Widget::filterCursorMoved() {
 }
 
 void Widget::completeHashtag(QString tag) {
-	const auto t = _filter->getLastText();;
+	const auto t = _filter->getLastText();
 	auto cur = _filter->textCursor().position();
 	auto hashtag = QString();
 	for (int start = cur; start > 0;) {
@@ -2949,7 +2971,7 @@ RowDescriptor Widget::resolveChatNext(RowDescriptor from) const {
 }
 
 RowDescriptor Widget::resolveChatPrevious(RowDescriptor from) const {
-   return _inner->resolveChatPrevious(from);
+	return _inner->resolveChatPrevious(from);
 }
 
 void Widget::keyPressEvent(QKeyEvent *e) {

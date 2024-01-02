@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "data/data_channel.h"
 
-#include "data/data_peer_values.h"
 #include "data/data_changes.h"
 #include "data/data_channel_admins.h"
 #include "data/data_user.h"
@@ -17,19 +16,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_folder.h"
 #include "data/data_forum.h"
 #include "data/data_forum_icons.h"
-#include "data/data_location.h"
 #include "data/data_histories.h"
 #include "data/data_group_call.h"
 #include "data/data_message_reactions.h"
-#include "data/data_peer_bot_command.h"
-#include "data/data_user_names.h"
+#include "data/data_wall_paper.h"
 #include "data/notify/data_notify_settings.h"
 #include "main/main_session.h"
 #include "main/session/send_as_peers.h"
 #include "base/unixtime.h"
 #include "core/application.h"
 #include "history/history.h"
-#include "main/main_session.h"
 #include "api/api_chat_invite.h"
 #include "api/api_invite_links.h"
 #include "apiwrap.h"
@@ -175,7 +171,7 @@ void ChannelData::setFlags(ChannelDataFlags which) {
 			session().changes().peerUpdated(this, UpdateFlag::Migration);
 		}
 	}
-	if (diff & (Flag::Forum | Flag::CallNotEmpty)) {
+	if (diff & (Flag::Forum | Flag::CallNotEmpty | Flag::SimilarExpanded)) {
 		if (const auto history = this->owner().historyLoaded(this)) {
 			if (diff & Flag::CallNotEmpty) {
 				history->updateChatListEntry();
@@ -187,6 +183,11 @@ void ChannelData::setFlags(ChannelDataFlags which) {
 					if (const auto forum = this->forum()) {
 						forum->preloadTopics();
 					}
+				}
+			}
+			if (diff & Flag::SimilarExpanded) {
+				if (const auto item = history->joinedMessageInstance()) {
+					history->owner().requestItemResize(item);
 				}
 			}
 		}
@@ -473,6 +474,14 @@ void ChannelData::applyEditBanned(
 		}
 	}
 	session().changes().peerUpdated(this, flags);
+}
+
+void ChannelData::setViewAsMessagesFlag(bool enabled) {
+	if (viewForumAsMessages() == enabled) {
+		return;
+	}
+	setFlags((flags() & ~Flag::ViewAsMessages)
+		| (enabled ? Flag::ViewAsMessages : Flag()));
 }
 
 void ChannelData::markForbidden() {
@@ -940,6 +949,14 @@ void ChannelData::processTopics(const MTPVector<MTPForumTopic> &topics) {
 	}
 }
 
+int ChannelData::levelHint() const {
+	return _levelHint;
+}
+
+void ChannelData::updateLevelHint(int levelHint) {
+	_levelHint = levelHint;
+}
+
 namespace Data {
 
 void ApplyMigration(
@@ -997,7 +1014,9 @@ void ApplyChannelUpdate(
 		| Flag::PreHistoryHidden
 		| Flag::AntiSpam
 		| Flag::Location
-		| Flag::ParticipantsHidden;
+		| Flag::ParticipantsHidden
+		| Flag::CanGetStatistics
+		| Flag::ViewAsMessages;
 	channel->setFlags((channel->flags() & ~mask)
 		| (update.is_can_set_username() ? Flag::CanSetUsername : Flag())
 		| (update.is_can_view_participants()
@@ -1009,6 +1028,10 @@ void ApplyChannelUpdate(
 		| (update.vlocation() ? Flag::Location : Flag())
 		| (update.is_participants_hidden()
 			? Flag::ParticipantsHidden
+			: Flag())
+		| (update.is_can_view_stats() ? Flag::CanGetStatistics : Flag())
+		| (update.is_view_forum_as_messages()
+			? Flag::ViewAsMessages
 			: Flag()));
 	channel->setUserpicPhoto(update.vchat_photo());
 	if (const auto migratedFrom = update.vmigrated_from_chat_id()) {
@@ -1118,10 +1141,21 @@ void ApplyChannelUpdate(
 		channel,
 		update.vnotify_settings());
 
+	if (update.vstats_dc()) {
+		channel->owner().applyStatsDcId(channel, update.vstats_dc()->v);
+	}
+
 	if (const auto sendAs = update.vdefault_send_as()) {
 		session->sendAsPeers().setChosen(channel, peerFromMTP(*sendAs));
 	} else {
 		session->sendAsPeers().setChosen(channel, PeerId());
+	}
+
+	if (const auto paper = update.vwallpaper()) {
+		channel->setWallPaper(
+			Data::WallPaper::Create(&channel->session(), *paper));
+	} else {
+		channel->setWallPaper({});
 	}
 
 	// For clearUpTill() call.

@@ -7,8 +7,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/empty_userpic.h"
 
-#include "ui/emoji_config.h"
+#include "ui/chat/chat_style.h"
 #include "ui/effects/animation_value.h"
+#include "ui/emoji_config.h"
 #include "ui/painter.h"
 #include "ui/ui_utility.h"
 #include "styles/style_chat.h"
@@ -150,6 +151,38 @@ void PaintRepliesMessagesInner(
 		fg);
 }
 
+void PaintHiddenAuthorInner(
+		QPainter &p,
+		int x,
+		int y,
+		int size,
+		const style::color &fg) {
+	PaintIconInner(
+		p,
+		x,
+		y,
+		size,
+		st::defaultDialogRow.photoSize,
+		st::dialogsHiddenAuthorUserpic,
+		fg);
+}
+
+void PaintMyNotesInner(
+		QPainter &p,
+		int x,
+		int y,
+		int size,
+		const style::color &fg) {
+	PaintIconInner(
+		p,
+		x,
+		y,
+		size,
+		st::defaultDialogRow.photoSize,
+		st::dialogsMyNotesUserpic,
+		fg);
+}
+
 void PaintExternalMessagesInner(
 		QPainter &p,
 		int x,
@@ -221,13 +254,11 @@ QString EmptyUserpic::InaccessibleName() {
 	return QChar(0) + u"inaccessible"_q;
 }
 
-int EmptyUserpic::ColorIndex(uint64 id) {
-	const auto index = id % 7;
-	const int map[] = { 0, 7, 4, 1, 6, 3, 5 };
-	return map[index];
+uint8 EmptyUserpic::ColorIndex(uint64 id) {
+	return DecideColorIndex(id);
 }
 
-EmptyUserpic::BgColors EmptyUserpic::UserpicColor(int id) {
+EmptyUserpic::BgColors EmptyUserpic::UserpicColor(uint8 colorIndex) {
 	const EmptyUserpic::BgColors colors[] = {
 		{ st::historyPeer1UserpicBg, st::historyPeer1UserpicBg2 },
 		{ st::historyPeer2UserpicBg, st::historyPeer2UserpicBg2 },
@@ -238,7 +269,7 @@ EmptyUserpic::BgColors EmptyUserpic::UserpicColor(int id) {
 		{ st::historyPeer7UserpicBg, st::historyPeer7UserpicBg2 },
 		{ st::historyPeer8UserpicBg, st::historyPeer8UserpicBg2 },
 	};
-	return colors[id];
+	return colors[ColorIndexToPaletteIndex(colorIndex)];
 }
 
 void EmptyUserpic::paint(
@@ -395,6 +426,84 @@ void EmptyUserpic::PaintRepliesMessages(
 QImage EmptyUserpic::GenerateRepliesMessages(int size) {
 	return Generate(size, [&](QPainter &p) {
 		PaintRepliesMessages(p, 0, 0, size, size);
+	});
+}
+
+void EmptyUserpic::PaintHiddenAuthor(
+		QPainter &p,
+		int x,
+		int y,
+		int outerWidth,
+		int size) {
+	auto bg = QLinearGradient(x, y, x, y + size);
+	bg.setStops({
+		{ 0., st::premiumButtonBg2->c },
+		{ 1., st::premiumButtonBg3->c },
+	});
+	const auto &fg = st::historyPeerUserpicFg;
+	PaintHiddenAuthor(p, x, y, outerWidth, size, QBrush(bg), fg);
+}
+
+void EmptyUserpic::PaintHiddenAuthor(
+		QPainter &p,
+		int x,
+		int y,
+		int outerWidth,
+		int size,
+		QBrush bg,
+		const style::color &fg) {
+	x = style::RightToLeft() ? (outerWidth - x - size) : x;
+
+	PainterHighQualityEnabler hq(p);
+	p.setBrush(bg);
+	p.setPen(Qt::NoPen);
+	p.drawEllipse(x, y, size, size);
+
+	PaintHiddenAuthorInner(p, x, y, size, fg);
+}
+
+QImage EmptyUserpic::GenerateHiddenAuthor(int size) {
+	return Generate(size, [&](QPainter &p) {
+		PaintHiddenAuthor(p, 0, 0, size, size);
+	});
+}
+
+void EmptyUserpic::PaintMyNotes(
+		QPainter &p,
+		int x,
+		int y,
+		int outerWidth,
+		int size) {
+	auto bg = QLinearGradient(x, y, x, y + size);
+	bg.setStops({
+		{ 0., st::historyPeerSavedMessagesBg->c },
+		{ 1., st::historyPeerSavedMessagesBg2->c }
+	});
+	const auto &fg = st::historyPeerUserpicFg;
+	PaintMyNotes(p, x, y, outerWidth, size, QBrush(bg), fg);
+}
+
+void EmptyUserpic::PaintMyNotes(
+		QPainter &p,
+		int x,
+		int y,
+		int outerWidth,
+		int size,
+		QBrush bg,
+		const style::color &fg) {
+	x = style::RightToLeft() ? (outerWidth - x - size) : x;
+
+	PainterHighQualityEnabler hq(p);
+	p.setBrush(bg);
+	p.setPen(Qt::NoPen);
+	p.drawEllipse(x, y, size, size);
+
+	PaintMyNotesInner(p, x, y, size, fg);
+}
+
+QImage EmptyUserpic::GenerateMyNotes(int size) {
+	return Generate(size, [&](QPainter &p) {
+		PaintMyNotes(p, 0, 0, size, size);
 	});
 }
 

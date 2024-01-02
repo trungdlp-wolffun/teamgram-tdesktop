@@ -10,17 +10,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_chat_invite.h"
 #include "history/view/history_view_service_message.h"
 #include "history/view/history_view_message.h"
-#include "history/view/media/history_view_media.h"
 #include "history/view/media/history_view_media_grouped.h"
+#include "history/view/media/history_view_similar_channels.h"
 #include "history/view/media/history_view_sticker.h"
 #include "history/view/media/history_view_large_emoji.h"
 #include "history/view/media/history_view_custom_emoji.h"
 #include "history/view/reactions/history_view_reactions_button.h"
 #include "history/view/reactions/history_view_reactions.h"
 #include "history/view/history_view_cursor_state.h"
+#include "history/view/history_view_reply.h"
 #include "history/view/history_view_spoiler_click_handler.h"
 #include "history/history.h"
-#include "history/history_item.h"
 #include "history/history_item_components.h"
 #include "history/history_item_helpers.h"
 #include "base/unixtime.h"
@@ -35,17 +35,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_session_controller.h"
 #include "ui/effects/path_shift_gradient.h"
 #include "ui/effects/reaction_fly_animation.h"
-#include "ui/chat/chat_style.h"
 #include "ui/toast/toast.h"
-#include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/item_text_options.h"
 #include "ui/painter.h"
 #include "data/data_session.h"
-#include "data/data_groups.h"
 #include "data/data_forum.h"
 #include "data/data_forum_topic.h"
-#include "data/data_media_types.h"
 #include "data/data_sponsored_messages.h"
 #include "data/data_message_reactions.h"
 #include "lang/lang_keys.h"
@@ -68,16 +64,20 @@ Element *MousedElement/* = nullptr*/;
 		HistoryMessageForwarded *prevForwarded,
 		not_null<HistoryItem*> item,
 		HistoryMessageForwarded *forwarded) {
-	const auto sender = previous->senderOriginal();
+	const auto sender = previous->displayFrom();
 	if ((prevForwarded != nullptr) != (forwarded != nullptr)) {
 		return false;
-	} else if (sender != item->senderOriginal()) {
+	} else if (sender != item->displayFrom()) {
 		return false;
 	} else if (!prevForwarded || sender) {
 		return true;
 	}
-	const auto previousInfo = prevForwarded->hiddenSenderInfo.get();
-	const auto itemInfo = forwarded->hiddenSenderInfo.get();
+	const auto previousInfo = prevForwarded->savedFromHiddenSenderInfo
+		? prevForwarded->savedFromHiddenSenderInfo.get()
+		: prevForwarded->originalHiddenSenderInfo.get();
+	const auto itemInfo = forwarded->savedFromHiddenSenderInfo
+		? forwarded->savedFromHiddenSenderInfo.get()
+		: forwarded->originalHiddenSenderInfo.get();
 	Assert(previousInfo != nullptr);
 	Assert(itemInfo != nullptr);
 	return (*previousInfo == *itemInfo);
@@ -109,11 +109,6 @@ std::unique_ptr<Ui::PathShiftGradient> MakePathShiftGradient(
 bool DefaultElementDelegate::elementUnderCursor(
 		not_null<const Element*> view) {
 	return false;
-}
-
-float64 DefaultElementDelegate::elementHighlightOpacity(
-		not_null<const HistoryItem*> item) const {
-	return 0.;
 }
 
 bool DefaultElementDelegate::elementInSelectionMode() {
@@ -178,7 +173,7 @@ bool DefaultElementDelegate::elementIsChatWide() {
 	return false;
 }
 
-void DefaultElementDelegate::elementReplyTo(const FullMsgId &to) {
+void DefaultElementDelegate::elementReplyTo(const FullReplyTo &to) {
 }
 
 void DefaultElementDelegate::elementStartInteraction(
@@ -275,8 +270,10 @@ QString DateTooltipText(not_null<Element*> view) {
 	}
 	if (view->isSignedAuthorElided()) {
 		if (const auto msgsigned = item->Get<HistoryMessageSigned>()) {
-			dateText += '\n'
-				+ tr::lng_signed_author(tr::now, lt_user, msgsigned->author);
+			dateText += '\n' + tr::lng_signed_author(
+				tr::now,
+				lt_user,
+				msgsigned->postAuthor);
 		}
 	}
 	return dateText;
@@ -338,7 +335,6 @@ void UnreadBar::paint(
 		text);
 }
 
-
 void DateBadge::init(const QString &date) {
 	text = date;
 	width = st::msgServiceFont->width(text);
@@ -359,6 +355,81 @@ void DateBadge::paint(
 		int w,
 		bool chatWide) const {
 	ServiceMessagePainter::PaintDate(p, st, text, width, y, w, chatWide);
+}
+
+void ServicePreMessage::init(TextWithEntities string) {
+	text = Ui::Text::String(
+		st::serviceTextStyle,
+		string,
+		kMarkupTextOptions,
+		st::msgMinWidth);
+}
+
+int ServicePreMessage::resizeToWidth(int newWidth, bool chatWide) {
+	width = newWidth;
+	if (chatWide) {
+		accumulate_min(
+			width,
+			st::msgMaxWidth + 2 * st::msgPhotoSkip + 2 * st::msgMargin.left());
+	}
+	auto contentWidth = width;
+	contentWidth -= st::msgServiceMargin.left() + st::msgServiceMargin.left(); // two small margins
+	if (contentWidth < st::msgServicePadding.left() + st::msgServicePadding.right() + 1) {
+		contentWidth = st::msgServicePadding.left() + st::msgServicePadding.right() + 1;
+	}
+
+	auto maxWidth = text.maxWidth()
+		+ st::msgServicePadding.left()
+		+ st::msgServicePadding.right();
+	auto minHeight = text.minHeight();
+
+	auto nwidth = qMax(contentWidth
+		- st::msgServicePadding.left()
+		- st::msgServicePadding.right(), 0);
+	height = (contentWidth >= maxWidth)
+		? minHeight
+		: text.countHeight(nwidth);
+	height += st::msgServicePadding.top()
+		+ st::msgServicePadding.bottom()
+		+ st::msgServiceMargin.top()
+		+ st::msgServiceMargin.bottom();
+	return height;
+}
+
+void ServicePreMessage::paint(
+		Painter &p,
+		const PaintContext &context,
+		QRect g,
+		bool chatWide) const {
+	const auto top = g.top() - height - st::msgMargin.top();
+	p.translate(0, top);
+
+	const auto rect = QRect(0, 0, width, height)
+		- st::msgServiceMargin;
+	const auto trect = rect - st::msgServicePadding;
+
+	ServiceMessagePainter::PaintComplexBubble(
+		p,
+		context.st,
+		rect.left(),
+		rect.width(),
+		text,
+		trect);
+
+	p.setBrush(Qt::NoBrush);
+	p.setPen(context.st->msgServiceFg());
+	p.setFont(st::msgServiceFont);
+	text.draw(p, {
+		.position = trect.topLeft(),
+		.availableWidth = trect.width(),
+		.align = style::al_top,
+		.palette = &context.st->serviceTextPalette(),
+		.now = context.now,
+		//.selection = context.selection,
+		.fullWidthSelection = false,
+	});
+
+	p.translate(0, -top);
 }
 
 void FakeBotAboutTop::init() {
@@ -390,7 +461,8 @@ Element::Element(
 	| Flag::NeedsResize
 	| (IsItemScheduledUntilOnline(data)
 		? Flag::ScheduledUntilOnline
-		: Flag()))
+		: Flag())
+	| (countIsTopicRootReply() ? Flag::TopicRootReply : Flag()))
 , _context(delegate->elementContext()) {
 	history()->owner().registerItemView(this);
 	refreshMedia(replacing);
@@ -412,6 +484,10 @@ not_null<HistoryItem*> Element::data() const {
 
 not_null<History*> Element::history() const {
 	return _data->history();
+}
+
+uint8 Element::colorIndex() const {
+	return data()->colorIndex();
 }
 
 QDateTime Element::dateTime() const {
@@ -481,8 +557,8 @@ void Element::prepareCustomEmojiPaint(
 	}
 	clearCustomEmojiRepaint();
 	p.setInactive(context.paused);
-	if (!_heavyCustomEmoji) {
-		_heavyCustomEmoji = true;
+	if (!(_flags & Flag::HeavyCustomEmoji)) {
+		_flags |= Flag::HeavyCustomEmoji;
 		history()->owner().registerHeavyViewPart(const_cast<Element*>(this));
 	}
 }
@@ -496,8 +572,8 @@ void Element::prepareCustomEmojiPaint(
 	}
 	clearCustomEmojiRepaint();
 	p.setInactive(context.paused);
-	if (!_heavyCustomEmoji) {
-		_heavyCustomEmoji = true;
+	if (!(_flags & Flag::HeavyCustomEmoji)) {
+		_flags |= Flag::HeavyCustomEmoji;
 		history()->owner().registerHeavyViewPart(const_cast<Element*>(this));
 	}
 }
@@ -510,6 +586,9 @@ void Element::paintHighlight(
 		Painter &p,
 		const PaintContext &context,
 		int geometryHeight) const {
+	if (context.highlight.opacity == 0.) {
+		return;
+	}
 	const auto top = marginTop();
 	const auto bottom = marginBottom();
 	const auto fill = qMin(top, bottom);
@@ -525,18 +604,9 @@ void Element::paintCustomHighlight(
 		int y,
 		int height,
 		not_null<const HistoryItem*> item) const {
-	const auto opacity = delegate()->elementHighlightOpacity(item);
-	if (opacity == 0.) {
-		return;
-	}
 	const auto o = p.opacity();
-	p.setOpacity(o * opacity);
-	p.fillRect(
-		0,
-		y,
-		width(),
-		height,
-		context.st->msgSelectOverlay());
+	p.setOpacity(o * context.highlight.opacity);
+	p.fillRect(0, y, width(), height, context.st->msgSelectOverlay());
 	p.setOpacity(o);
 }
 
@@ -652,13 +722,17 @@ void Element::refreshMedia(Element *replacing) {
 			}
 		}
 		_media = media->createView(this, replacing);
+	} else if (item->showSimilarChannels()) {
+		_media = std::make_unique<SimilarChannels>(this);
 	} else if (isOnlyCustomEmoji()
-		&& Core::App().settings().largeEmoji()) {
+		&& Core::App().settings().largeEmoji()
+		&& !item->isSponsored()) {
 		_media = std::make_unique<UnwrappedMedia>(
 			this,
 			std::make_unique<CustomEmoji>(this, onlyCustomEmoji()));
 	} else if (isIsolatedEmoji()
-		&& Core::App().settings().largeEmoji()) {
+		&& Core::App().settings().largeEmoji()
+		&& !item->isSponsored()) {
 		const auto emoji = isolatedEmoji();
 		const auto emojiStickers = &history()->session().emojiStickersPack();
 		const auto skipPremiumEffect = false;
@@ -722,7 +796,7 @@ auto Element::contextDependentServiceText() -> TextWithLinks {
 	if (!info) {
 		return {};
 	}
-	if (_delegate->elementContext() == Context::Replies) {
+	if (_context == Context::Replies) {
 		if (info->created()) {
 			return { { tr::lng_action_topic_created_inside(tr::now) } };
 		}
@@ -736,7 +810,7 @@ auto Element::contextDependentServiceText() -> TextWithLinks {
 		return {};
 	}
 	const auto from = item->from();
-	const auto topicUrl =  u"internal:url:https://t.me/c/%1/%2"_q
+	const auto topicUrl = u"internal:url:https://t.me/c/%1/%2"_q
 		.arg(peerToChannel(peerId).bare)
 		.arg(topicRootId.bare);
 	const auto fromLink = [&](int index) {
@@ -971,7 +1045,9 @@ bool Element::computeIsAttachToPrevious(not_null<Element*> previous) {
 				|| !item->from()->isChannel());
 	};
 	const auto item = data();
-	if (!Has<DateBadge>() && !Has<UnreadBar>()) {
+	if (!Has<DateBadge>()
+		&& !Has<UnreadBar>()
+		&& !Has<ServicePreMessage>()) {
 		const auto prev = previous->data();
 		const auto previousMarkup = prev->inlineReplyMarkup();
 		const auto possible = (std::abs(prev->date() - item->date())
@@ -1152,15 +1228,6 @@ QSize Element::countCurrentSize(int newWidth) {
 	return performCountCurrentSize(newWidth);
 }
 
-void Element::refreshIsTopicRootReply() {
-	const auto topicRootReply = countIsTopicRootReply();
-	if (topicRootReply) {
-		_flags |= Flag::TopicRootReply;
-	} else {
-		_flags &= ~Flag::TopicRootReply;
-	}
-}
-
 bool Element::countIsTopicRootReply() const {
 	const auto item = data();
 	if (!item->history()->isForum()) {
@@ -1179,6 +1246,18 @@ void Element::setDisplayDate(bool displayDate) {
 		setPendingResize();
 	} else if (!displayDate && Has<DateBadge>()) {
 		RemoveComponents(DateBadge::Bit());
+		setPendingResize();
+	}
+}
+
+void Element::setServicePreMessage(TextWithEntities text) {
+	if (!text.empty()) {
+		AddComponents(ServicePreMessage::Bit());
+		const auto service = Get<ServicePreMessage>();
+		service->init(std::move(text));
+		setPendingResize();
+	} else if (Has<ServicePreMessage>()) {
+		RemoveComponents(ServicePreMessage::Bit());
 		setPendingResize();
 	}
 }
@@ -1243,6 +1322,10 @@ bool Element::hasFromName() const {
 	return false;
 }
 
+bool Element::displayReply() const {
+	return Has<Reply>();
+}
+
 bool Element::displayFromName() const {
 	return false;
 }
@@ -1257,6 +1340,10 @@ bool Element::displayForwardedFrom() const {
 
 bool Element::hasOutLayout() const {
 	return false;
+}
+
+bool Element::hasRightLayout() const {
+	return hasOutLayout() && !_delegate->elementIsChatWide();
 }
 
 bool Element::drawBubble() const {
@@ -1300,13 +1387,22 @@ TimeId Element::displayedEditDate() const {
 	return TimeId(0);
 }
 
-HistoryMessageReply *Element::displayedReply() const {
-	return nullptr;
+bool Element::toggleSelectionByHandlerClick(
+		const ClickHandlerPtr &handler) const {
+	return false;
 }
 
-bool Element::toggleSelectionByHandlerClick(
-	const ClickHandlerPtr &handler) const {
+bool Element::allowTextSelectionByHandler(
+		const ClickHandlerPtr &handler) const {
 	return false;
+}
+
+bool Element::usesBubblePattern(const PaintContext &context) const {
+	return (context.selection != FullSelection)
+		&& hasOutLayout()
+		&& context.bubblesPattern
+		&& !context.viewport.isEmpty()
+		&& !context.bubblesPattern->pixmap.size().isEmpty();
 }
 
 bool Element::hasVisibleText() const {
@@ -1321,7 +1417,7 @@ auto Element::verticalRepaintRange() const -> VerticalRepaintRange {
 }
 
 bool Element::hasHeavyPart() const {
-	return _heavyCustomEmoji;
+	return (_flags & Flag::HeavyCustomEmoji);
 }
 
 void Element::checkHeavyPart() {
@@ -1355,11 +1451,11 @@ void Element::unloadHeavyPart() {
 	if (_media) {
 		_media->unloadHeavyPart();
 	}
-	if (_heavyCustomEmoji) {
-		_heavyCustomEmoji = false;
+	if (_flags & Flag::HeavyCustomEmoji) {
+		_flags &= ~Flag::HeavyCustomEmoji;
 		_text.unloadPersistentAnimation();
-		if (const auto reply = data()->Get<HistoryMessageReply>()) {
-			reply->replyToText.unloadPersistentAnimation();
+		if (const auto reply = Get<Reply>()) {
+			reply->unloadPersistentAnimation();
 		}
 	}
 }
@@ -1475,6 +1571,158 @@ TextSelection Element::adjustSelection(
 	return selection;
 }
 
+SelectedQuote Element::FindSelectedQuote(
+		const Ui::Text::String &text,
+		TextSelection selection,
+		not_null<HistoryItem*> item) {
+	if (selection.to > text.length()) {
+		return {};
+	}
+	auto modified = selection;
+	for (const auto &modification : text.modifications()) {
+		if (modification.position >= selection.to) {
+			break;
+		} else if (modification.position <= selection.from) {
+			modified.from += modification.skipped;
+			if (modification.added
+				&& modification.position < selection.from) {
+				--modified.from;
+			}
+		}
+		modified.to += modification.skipped;
+		if (modification.added && modified.to > modified.from) {
+			--modified.to;
+		}
+	}
+	auto result = item->originalText();
+	if (modified.empty() || modified.to > result.text.size()) {
+		return {};
+	}
+	result.text = result.text.mid(
+		modified.from,
+		modified.to - modified.from);
+	const auto allowed = std::array{
+		EntityType::Bold,
+		EntityType::Italic,
+		EntityType::Underline,
+		EntityType::StrikeOut,
+		EntityType::Spoiler,
+		EntityType::CustomEmoji,
+	};
+	for (auto i = result.entities.begin(); i != result.entities.end();) {
+		const auto offset = i->offset();
+		const auto till = offset + i->length();
+		if ((till <= modified.from)
+			|| (offset >= modified.to)
+			|| !ranges::contains(allowed, i->type())) {
+			i = result.entities.erase(i);
+		} else {
+			if (till > modified.to) {
+				i->shrinkFromRight(till - modified.to);
+			}
+			i->shiftLeft(modified.from);
+			++i;
+		}
+	}
+	return { item, result, modified.from };
+}
+
+TextSelection Element::FindSelectionFromQuote(
+		const Ui::Text::String &text,
+		const SelectedQuote &quote) {
+	Expects(quote.item != nullptr);
+
+	if (quote.text.empty()) {
+		return {};
+	}
+	const auto &original = quote.item->originalText();
+	const auto length = int(original.text.size());
+	const auto qlength = int(quote.text.text.size());
+	const auto checkAt = [&](int offset) {
+		return TextSelection{
+			uint16(offset),
+			uint16(offset + qlength),
+		};
+	};
+	const auto findOneAfter = [&](int offset) {
+		if (offset > length - qlength) {
+			return TextSelection();
+		}
+		const auto i = original.text.indexOf(quote.text.text, offset);
+		return (i >= 0) ? checkAt(i) : TextSelection();
+	};
+	const auto findOneBefore = [&](int offset) {
+		if (!offset) {
+			return TextSelection();
+		}
+		const auto end = std::min(offset + qlength - 1, length);
+		const auto from = end - length - 1;
+		const auto i = original.text.lastIndexOf(quote.text.text, from);
+		return (i >= 0) ? checkAt(i) : TextSelection();
+	};
+	const auto findAfter = [&](int offset) {
+		while (true) {
+			const auto result = findOneAfter(offset);
+			if (!result.empty() || result == TextSelection()) {
+				return result;
+			}
+			offset = result.from;
+		}
+	};
+	const auto findBefore = [&](int offset) {
+		while (true) {
+			const auto result = findOneBefore(offset);
+			if (!result.empty() || result == TextSelection()) {
+				return result;
+			}
+			offset = result.from - 2;
+			if (offset < 0) {
+				return result;
+			}
+		}
+	};
+	const auto findTwoWays = [&](int offset) {
+		const auto after = findAfter(offset);
+		if (after.empty()) {
+			return findBefore(offset);
+		} else if (after.from == offset) {
+			return after;
+		}
+		const auto before = findBefore(offset);
+		return before.empty()
+			? after
+			: (offset - before.from < after.from - offset)
+			? before
+			: after;
+	};
+	auto result = findTwoWays(quote.offset);
+	if (result.empty()) {
+		return {};
+	}
+	for (const auto &modification : text.modifications()) {
+		if (modification.position >= result.to) {
+			break;
+		}
+		if (modification.added) {
+			++result.to;
+		}
+		const auto shiftTo = std::min(
+			int(modification.skipped),
+			result.to - modification.position);
+		result.to -= shiftTo;
+		if (modification.position <= result.from) {
+			if (modification.added) {
+				++result.from;
+			}
+			const auto shiftFrom = std::min(
+				int(modification.skipped),
+				result.from - modification.position);
+			result.from -= shiftFrom;
+		}
+	}
+	return result;
+}
+
 Reactions::ButtonParameters Element::reactionButtonParameters(
 		QPoint position,
 		const TextState &reactionState) const {
@@ -1533,8 +1781,8 @@ Element::~Element() {
 	// Delete media while owner still exists.
 	clearSpecialOnlyEmoji();
 	base::take(_media);
-	if (_heavyCustomEmoji) {
-		_heavyCustomEmoji = false;
+	if (_flags & Flag::HeavyCustomEmoji) {
+		_flags &= ~Flag::HeavyCustomEmoji;
 		_text.unloadPersistentAnimation();
 		checkHeavyPart();
 	}

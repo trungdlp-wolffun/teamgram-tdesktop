@@ -15,14 +15,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer_bot_command.h"
 #include "data/data_photo.h"
 #include "data/data_stories.h"
-#include "data/data_emoji_statuses.h"
-#include "data/data_user_names.h"
 #include "data/data_wall_paper.h"
 #include "data/notify/data_notify_settings.h"
 #include "history/history.h"
 #include "api/api_peer_photo.h"
 #include "apiwrap.h"
-#include "ui/text/text_options.h"
 #include "lang/lang_keys.h"
 #include "styles/style_chat.h"
 
@@ -73,23 +70,6 @@ void UserData::setPhoto(const MTPUserProfilePhoto &photo) {
 		removeFlags(UserDataFlag::PersonalPhoto);
 		clearUserpic();
 	});
-}
-
-void UserData::setEmojiStatus(const MTPEmojiStatus &status) {
-	const auto parsed = Data::ParseEmojiStatus(status);
-	setEmojiStatus(parsed.id, parsed.until);
-}
-
-void UserData::setEmojiStatus(DocumentId emojiStatusId, TimeId until) {
-	if (_emojiStatusId != emojiStatusId) {
-		_emojiStatusId = emojiStatusId;
-		session().changes().peerUpdated(this, UpdateFlag::EmojiStatus);
-	}
-	owner().emojiStatuses().registerAutomaticClear(this, until);
-}
-
-DocumentId UserData::emojiStatusId() const {
-	return _emojiStatusId;
 }
 
 auto UserData::unavailableReasons() const
@@ -388,7 +368,7 @@ QString UserData::username() const {
 }
 
 QString UserData::editableUsername() const {
-	return _username.editableUsername();;
+	return _username.editableUsername();
 }
 
 const std::vector<QString> &UserData::usernames() const {
@@ -517,7 +497,8 @@ void ApplyUserUpdate(not_null<UserData*> user, const MTPDuserFull &update) {
 
 	if (const auto paper = update.vwallpaper()) {
 		user->setWallPaper(
-			Data::WallPaper::Create(&user->session(), *paper));
+			Data::WallPaper::Create(&user->session(), *paper),
+			update.is_wallpaper_overridden());
 	} else {
 		user->setWallPaper({});
 	}

@@ -32,7 +32,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/padding_wrap.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/painter.h"
-#include "settings/settings_common.h"
+#include "ui/vertical_list.h"
 #include "settings/settings_premium.h"
 #include "lottie/lottie_single_player.h"
 #include "history/view/media/history_view_sticker.h"
@@ -51,8 +51,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace {
 
 constexpr auto kPremiumShift = 21. / 240;
-constexpr auto kReactionsPerRow = 5;
-constexpr auto kDisabledOpacity = 0.5;
 constexpr auto kToggleStickerTimeout = 2 * crl::time(1000);
 constexpr auto kStarOpacityOff = 0.1;
 constexpr auto kStarOpacityOn = 1.;
@@ -66,6 +64,7 @@ struct Descriptor {
 	bool fromSettings = false;
 	Fn<void()> hiddenCallback;
 	Fn<void(not_null<Ui::BoxContent*>)> shownCallback;
+	bool hideSubscriptionButton = false;
 };
 
 bool operator==(const Descriptor &a, const Descriptor &b) {
@@ -93,6 +92,8 @@ void PreloadSticker(const std::shared_ptr<Data::DocumentMedia> &media) {
 
 [[nodiscard]] rpl::producer<QString> SectionTitle(PremiumPreview section) {
 	switch (section) {
+	case PremiumPreview::Wallpapers:
+		return tr::lng_premium_summary_subtitle_wallpapers();
 	case PremiumPreview::Stories:
 		return tr::lng_premium_summary_subtitle_stories();
 	case PremiumPreview::DoubleLimits:
@@ -127,6 +128,8 @@ void PreloadSticker(const std::shared_ptr<Data::DocumentMedia> &media) {
 
 [[nodiscard]] rpl::producer<QString> SectionAbout(PremiumPreview section) {
 	switch (section) {
+	case PremiumPreview::Wallpapers:
+		return tr::lng_premium_summary_about_wallpapers();
 	case PremiumPreview::Stories:
 		return tr::lng_premium_summary_about_stories();
 	case PremiumPreview::DoubleLimits:
@@ -471,6 +474,7 @@ struct VideoPreviewDocument {
 		case PremiumPreview::ProfileBadge: return "profile_badge";
 		case PremiumPreview::AnimatedUserpics: return "animated_userpics";
 		case PremiumPreview::RealTimeTranslation: return "translations";
+		case PremiumPreview::Wallpapers: return "wallpapers";
 		}
 		return "";
 	}();
@@ -1020,7 +1024,8 @@ void PreviewBox(
 			state->preload();
 		}
 	};
-	if (descriptor.fromSettings && show->session().premium()) {
+	if ((descriptor.fromSettings && show->session().premium())
+		|| descriptor.hideSubscriptionButton) {
 		box->setShowFinishedCallback(showFinished);
 		box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 	} else {
@@ -1146,7 +1151,7 @@ void DecorateListPromoBox(
 		box->boxClosing() | rpl::start_with_next(hidden, box->lifetime());
 	}
 
-	if (session->premium()) {
+	if (session->premium() || descriptor.hideSubscriptionButton) {
 		box->addButton(tr::lng_close(), [=] {
 			box->closeBox();
 		});
@@ -1281,10 +1286,12 @@ void ShowPremiumPreviewBox(
 void ShowPremiumPreviewBox(
 		std::shared_ptr<ChatHelpers::Show> show,
 		PremiumPreview section,
-		Fn<void(not_null<Ui::BoxContent*>)> shown) {
+		Fn<void(not_null<Ui::BoxContent*>)> shown,
+		bool hideSubscriptionButton) {
 	Show(std::move(show), Descriptor{
 		.section = section,
 		.shownCallback = std::move(shown),
+		.hideSubscriptionButton = hideSubscriptionButton,
 	});
 }
 
@@ -1488,7 +1495,7 @@ void UpgradedStoriesPreviewBox(
 		st::defaultPremiumLimits,
 		std::move(entries));
 
-	Settings::AddDividerText(
+	Ui::AddDividerText(
 		box->verticalLayout(),
 		tr::lng_premium_stories_about_mobile());
 }

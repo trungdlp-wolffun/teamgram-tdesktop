@@ -900,7 +900,6 @@ TextWithEntities Manager::ComposeReactionEmoji(
 		return TextWithEntities{ *emoji };
 	}
 	const auto id = v::get<DocumentId>(reaction.data);
-	auto entities = EntitiesInText();
 	const auto document = session->data().document(id);
 	const auto sticker = document->sticker();
 	const auto text = sticker ? sticker->alt : PlaceholderReactionText();
@@ -1060,18 +1059,20 @@ void Manager::notificationActivated(
 				const auto replyToId = (id.msgId > 0
 					&& !history->peer->isUser()
 					&& id.msgId != topicRootId)
-					? id.msgId
-					: 0;
+					? FullMsgId(history->peer->id, id.msgId)
+					: FullMsgId();
 				auto draft = std::make_unique<Data::Draft>(
 					reply,
-					replyToId,
-					topicRootId,
+					FullReplyTo{
+						.messageId = replyToId,
+						.topicRootId = topicRootId,
+					},
 					MessageCursor{
 						int(reply.text.size()),
 						int(reply.text.size()),
-						QFIXED_MAX,
+						Ui::kQFixedMax,
 					},
-					Data::PreviewState::Allowed);
+					Data::WebPageDraft());
 				history->setLocalDraft(std::move(draft));
 			}
 			window->widget()->showFromTray();
@@ -1150,7 +1151,7 @@ void Manager::notificationReplied(
 		? topicRootId
 		: MsgId(0);
 	message.action.replyTo = {
-		.msgId = replyToId,
+		.messageId = { replyToId ? history->peer->id : 0, replyToId },
 		.topicRootId = topic ? topic->rootId() : 0,
 	};
 	message.action.clearDraft = false;

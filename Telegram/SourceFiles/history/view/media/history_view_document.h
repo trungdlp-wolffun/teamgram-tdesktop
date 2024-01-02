@@ -25,6 +25,8 @@ class String;
 
 namespace HistoryView {
 
+using TtlPaintCallback = Fn<void(QPainter&, QRect, QColor)>;
+
 class Document final
 	: public File
 	, public RuntimeComposer<Document> {
@@ -46,6 +48,9 @@ public:
 	bool hasTextForCopy() const override;
 
 	TextForMimeData selectedText(TextSelection selection) const override;
+	SelectedQuote selectedQuote(TextSelection selection) const override;
+	TextSelection selectionFromQuote(
+		const SelectedQuote &quote) const override;
 
 	bool uploading() const override;
 
@@ -174,6 +179,8 @@ private:
 	};
 
 	mutable TooltipFilename _tooltipFilename;
+
+	TtlPaintCallback _drawTtl;
 
 	bool _transcribedRound = false;
 

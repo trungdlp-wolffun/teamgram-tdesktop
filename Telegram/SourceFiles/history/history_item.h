@@ -8,10 +8,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "base/runtime_composer.h"
-#include "base/flags.h"
 #include "data/data_media_types.h"
 #include "history/history_item_edition.h"
-#include "history/history_item_reply_markup.h"
 
 #include <any>
 
@@ -22,6 +20,7 @@ struct HistoryMessageViews;
 struct HistoryMessageMarkupData;
 struct HistoryMessageReplyMarkup;
 struct HistoryMessageTranslation;
+struct HistoryMessageForwarded;
 struct HistoryServiceDependentData;
 enum class HistorySelfDestructType;
 struct PreparedServiceText;
@@ -58,6 +57,7 @@ class ForumTopic;
 class Thread;
 struct SponsoredFrom;
 class Story;
+class SavedSublist;
 } // namespace Data
 
 namespace Main {
@@ -240,6 +240,9 @@ public:
 	[[nodiscard]] bool isPinned() const {
 		return _flags & MessageFlag::Pinned;
 	}
+	[[nodiscard]] bool invertMedia() const {
+		return _flags & MessageFlag::InvertMedia;
+	}
 	[[nodiscard]] bool unread(not_null<Data::Thread*> thread) const;
 	[[nodiscard]] bool showNotification() const;
 	void markClientSideAsRead();
@@ -313,6 +316,9 @@ public:
 	}
 	[[nodiscard]] bool isFakeBotAbout() const {
 		return _flags & MessageFlag::FakeBotAbout;
+	}
+	[[nodiscard]] bool showSimilarChannels() const {
+		return _flags & MessageFlag::ShowSimilarChannels;
 	}
 	[[nodiscard]] bool isRegular() const;
 	[[nodiscard]] bool isUploading() const;
@@ -465,6 +471,7 @@ public:
 	void setText(const TextWithEntities &textWithEntities);
 
 	[[nodiscard]] MsgId replyToId() const;
+	[[nodiscard]] FullMsgId replyToFullId() const;
 	[[nodiscard]] MsgId replyToTop() const;
 	[[nodiscard]] MsgId topicRootId() const;
 	[[nodiscard]] FullStoryId replyToStory() const;
@@ -473,12 +480,22 @@ public:
 
 	[[nodiscard]] not_null<PeerData*> author() const;
 
-	[[nodiscard]] TimeId dateOriginal() const;
-	[[nodiscard]] PeerData *senderOriginal() const;
-	[[nodiscard]] const HiddenSenderInfo *hiddenSenderInfo() const;
+	[[nodiscard]] TimeId originalDate() const;
+	[[nodiscard]] PeerData *originalSender() const;
+	[[nodiscard]] const HiddenSenderInfo *originalHiddenSenderInfo() const;
 	[[nodiscard]] not_null<PeerData*> fromOriginal() const;
-	[[nodiscard]] QString authorOriginal() const;
-	[[nodiscard]] MsgId idOriginal() const;
+	[[nodiscard]] QString originalPostAuthor() const;
+	[[nodiscard]] MsgId originalId() const;
+
+	[[nodiscard]] Data::SavedSublist *savedSublist() const;
+	[[nodiscard]] PeerData *savedSublistPeer() const;
+	[[nodiscard]] PeerData *savedFromSender() const;
+	[[nodiscard]] const HiddenSenderInfo *savedFromHiddenSenderInfo() const;
+
+	[[nodiscard]] const HiddenSenderInfo *displayHiddenSenderInfo() const;
+
+	[[nodiscard]] bool showForwardsFromSender(
+		not_null<const HistoryMessageForwarded*> forwarded) const;
 
 	[[nodiscard]] bool isEmpty() const;
 
@@ -497,6 +514,7 @@ public:
 	[[nodiscard]] bool isDiscussionPost() const;
 	[[nodiscard]] HistoryItem *lookupDiscussionPostOriginal() const;
 	[[nodiscard]] PeerData *displayFrom() const;
+	[[nodiscard]] uint8 colorIndex() const;
 
 	[[nodiscard]] std::unique_ptr<HistoryView::Element> createView(
 		not_null<HistoryView::ElementDelegate*> delegate,
@@ -579,8 +597,8 @@ private:
 		bool used);
 	void setSelfDestruct(HistorySelfDestructType type, MTPint mtpTTLvalue);
 
-	TextWithEntities fromLinkText() const;
-	ClickHandlerPtr fromLink() const;
+	[[nodiscard]] TextWithEntities fromLinkText() const;
+	[[nodiscard]] ClickHandlerPtr fromLink() const;
 
 	void setGroupId(MessageGroupId groupId);
 
@@ -607,8 +625,6 @@ private:
 	// It should show the receipt for the payed invoice. Still let mobile apps do that.
 	void replaceBuyWithReceiptInMarkup();
 
-	void setSponsoredFrom(const Data::SponsoredFrom &from);
-
 	[[nodiscard]] PreparedServiceText preparePinnedText();
 	[[nodiscard]] PreparedServiceText prepareGameScoreText();
 	[[nodiscard]] PreparedServiceText preparePaymentSentText();
@@ -619,9 +635,12 @@ private:
 	[[nodiscard]] PreparedServiceText prepareCallScheduledText(
 		TimeId scheduleDate);
 
+	[[nodiscard]] PeerData *computeDisplayFrom() const;
+
 	const not_null<History*> _history;
 	const not_null<PeerData*> _from;
-	MessageFlags _flags = 0;
+	mutable PeerData *_displayFrom = nullptr;
+	mutable MessageFlags _flags = 0;
 
 	TextWithEntities _text;
 

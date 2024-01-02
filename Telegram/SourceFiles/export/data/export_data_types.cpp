@@ -52,19 +52,124 @@ QString PrepareStoryFileName(
 		+ extension;
 }
 
+std::vector<std::vector<HistoryMessageMarkupButton>> ButtonRowsFromTL(
+		const MTPDreplyInlineMarkup &data) {
+	const auto &list = data.vrows().v;
+
+	if (list.isEmpty()) {
+		return {};
+	}
+	using Type = HistoryMessageMarkupButton::Type;
+	auto rows = std::vector<std::vector<HistoryMessageMarkupButton>>();
+	rows.reserve(list.size());
+
+	for (const auto &tlRow : list) {
+		auto row = std::vector<HistoryMessageMarkupButton>();
+		row.reserve(tlRow.data().vbuttons().v.size());
+		for (const auto &button : tlRow.data().vbuttons().v) {
+			button.match([&](const MTPDkeyboardButton &data) {
+				row.push_back({ Type::Default, qs(data.vtext()) });
+			}, [&](const MTPDkeyboardButtonCallback &data) {
+				row.push_back({
+					(data.is_requires_password()
+						? Type::CallbackWithPassword
+						: Type::Callback),
+					qs(data.vtext()),
+					qba(data.vdata())
+				});
+			}, [&](const MTPDkeyboardButtonRequestGeoLocation &data) {
+				row.push_back({ Type::RequestLocation, qs(data.vtext()) });
+			}, [&](const MTPDkeyboardButtonRequestPhone &data) {
+				row.push_back({ Type::RequestPhone, qs(data.vtext()) });
+			}, [&](const MTPDkeyboardButtonRequestPeer &data) {
+				row.push_back({
+					Type::RequestPeer,
+					qs(data.vtext()),
+					QByteArray("unsupported"),
+					QString(),
+					int64(data.vbutton_id().v),
+				});
+			}, [&](const MTPDkeyboardButtonUrl &data) {
+				row.push_back({
+					Type::Url,
+					qs(data.vtext()),
+					qba(data.vurl())
+				});
+			}, [&](const MTPDkeyboardButtonSwitchInline &data) {
+				const auto type = data.is_same_peer()
+					? Type::SwitchInlineSame
+					: Type::SwitchInline;
+				row.push_back({ type, qs(data.vtext()), qba(data.vquery()) });
+			}, [&](const MTPDkeyboardButtonGame &data) {
+				row.push_back({ Type::Game, qs(data.vtext()) });
+			}, [&](const MTPDkeyboardButtonBuy &data) {
+				row.push_back({ Type::Buy, qs(data.vtext()) });
+			}, [&](const MTPDkeyboardButtonUrlAuth &data) {
+				row.push_back({
+					Type::Auth,
+					qs(data.vtext()),
+					qba(data.vurl()),
+					qs(data.vfwd_text().value_or_empty()),
+					data.vbutton_id().v,
+				});
+			}, [&](const MTPDkeyboardButtonRequestPoll &data) {
+				const auto quiz = [&] {
+					if (!data.vquiz()) {
+						return QByteArray();
+					}
+					return data.vquiz()->match([&](const MTPDboolTrue&) {
+						return QByteArray(1, 1);
+					}, [&](const MTPDboolFalse&) {
+						return QByteArray(1, 0);
+					});
+				}();
+				row.push_back({
+					Type::RequestPoll,
+					qs(data.vtext()),
+					quiz
+				});
+			}, [&](const MTPDkeyboardButtonUserProfile &data) {
+				row.push_back({
+					Type::UserProfile,
+					qs(data.vtext()),
+					QByteArray::number(data.vuser_id().v)
+				});
+			}, [&](const MTPDinputKeyboardButtonUrlAuth &data) {
+			}, [&](const MTPDinputKeyboardButtonUserProfile &data) {
+			}, [&](const MTPDkeyboardButtonWebView &data) {
+				row.push_back({
+					Type::WebView,
+					qs(data.vtext()),
+					data.vurl().v
+				});
+			}, [&](const MTPDkeyboardButtonSimpleWebView &data) {
+				row.push_back({
+					Type::SimpleWebView,
+					qs(data.vtext()),
+					data.vurl().v
+				});
+			});
+		}
+		if (!row.empty()) {
+			rows.push_back(std::move(row));
+		}
+	}
+
+	return rows;
+}
+
 } // namespace
 
-int PeerColorIndex(BareId bareId) {
-	const auto index = bareId % 7;
-	const int map[] = { 0, 7, 4, 1, 6, 3, 5 };
-	return map[index];
+uint8 PeerColorIndex(BareId bareId) {
+	const uint8 map[] = { 0, 7, 4, 1, 6, 3, 5 };
+	return map[bareId % base::array_size(map)];
 }
 
 BareId PeerToBareId(PeerId peerId) {
 	return (peerId.value & PeerId::kChatTypeMask);
 }
 
-int PeerColorIndex(PeerId peerId) {
+uint8 PeerColorIndex(PeerId peerId) {
 	return PeerColorIndex(PeerToBareId(peerId));
 }
 
@@ -78,7 +183,7 @@ BareId StringBarePeerId(const Utf8String &data) {
 	return result;
 }
 
-int ApplicationColorIndex(int applicationId) {
+uint8 ApplicationColorIndex(int applicationId) {
 	static const auto official = std::map<int, int> {
 		{ 1, 0 }, // iOS
 		{ 7, 0 }, // iOS X
@@ -576,6 +681,18 @@ Poll ParsePoll(const MTPDmessageMediaPoll &data) {
 	return result;
 }
 
+GiveawayStart ParseGiveaway(const MTPDmessageMediaGiveaway &data) {
+	auto result = GiveawayStart{
+		.untilDate = data.vuntil_date().v,
+		.quantity = data.vquantity().v,
+		.months = data.vmonths().v,
+	};
+	for (const auto &id : data.vchannels().v) {
+		result.channels.push_back(ChannelId(id));
+	}
+	return result;
+}
+
 UserpicsSlice ParseUserpicsSlice(
 		const MTPVector<MTPPhoto> &data,
 		int baseIndex) {
@@ -755,6 +872,10 @@ ContactInfo ParseContactInfo(const MTPUser &data) {
 	auto result = ContactInfo();
 	data.match([&](const MTPDuser &data) {
 		result.userId = data.vid().v;
+		const auto color = data.vcolor();
+		result.colorIndex = (color && color->data().vcolor())
+			? color->data().vcolor()->v
+			: PeerColorIndex(result.userId);
 		if (const auto firstName = data.vfirst_name()) {
 			result.firstName = ParseString(*firstName);
 		}
@@ -766,15 +887,13 @@ ContactInfo ParseContactInfo(const MTPUser &data) {
 		}
 	}, [&](const MTPDuserEmpty &data) {
 		result.userId = data.vid().v;
+		result.colorIndex = PeerColorIndex(result.userId);
 	});
 	return result;
 }
 
-int ContactColorIndex(const ContactInfo &data) {
-	if (data.userId != 0) {
-		return PeerColorIndex(data.userId.bare);
-	}
-	return PeerColorIndex(StringBarePeerId(data.phoneNumber));
+uint8 ContactColorIndex(const ContactInfo &data) {
+	return data.colorIndex;
 }
 
 PeerId User::id() const {
@@ -786,6 +905,10 @@ User ParseUser(const MTPUser &data) {
 	result.info = ParseContactInfo(data);
 	data.match([&](const MTPDuser &data) {
 		result.bareId = data.vid().v;
+		const auto color = data.vcolor();
+		result.colorIndex = (color && color->data().vcolor())
+			? color->data().vcolor()->v
+			: PeerColorIndex(result.bareId);
 		if (const auto username = data.vusername()) {
 			result.username = ParseString(*username);
 		}
@@ -840,6 +963,10 @@ Chat ParseChat(const MTPChat &data) {
 		result.input = MTP_inputPeerChat(MTP_long(result.bareId));
 	}, [&](const MTPDchannel &data) {
 		result.bareId = data.vid().v;
+		const auto color = data.vcolor();
+		result.colorIndex = (color && color->data().vcolor())
+			? color->data().vcolor()->v
+			: PeerColorIndex(result.bareId);
 		result.isBroadcast = data.is_broadcast();
 		result.isSupergroup = data.is_megagroup();
 		result.title = ParseString(data.vtitle());
@@ -921,6 +1048,15 @@ MTPInputPeer Peer::input() const {
 		return chat->input;
 	}
 	Unexpected("Variant in Peer::id.");
+}
+
+uint8 Peer::colorIndex() const {
+	if (const auto user = this->user()) {
+		return user->colorIndex;
+	} else if (const auto chat = this->chat()) {
+		return chat->colorIndex;
+	}
+	Unexpected("Variant in Peer::colorIndex.");
 }
 
 std::map<PeerId, Peer> ParsePeersLists(
@@ -1057,7 +1193,11 @@ Media ParseMedia(
 	}, [](const MTPDmessageMediaDice &data) {
 		// #TODO dice
 	}, [](const MTPDmessageMediaStory &data) {
-		// #TODO stories export
+		// #TODO export stories
+	}, [&](const MTPDmessageMediaGiveaway &data) {
+		result.content = ParseGiveaway(data);
+	}, [&](const MTPDmessageMediaGiveawayResults &data) {
+		// #TODO export giveaway
 	}, [](const MTPDmessageMediaEmpty &data) {});
 	return result;
 }
@@ -1290,13 +1430,33 @@ ServiceAction ParseServiceAction(
 	}, [&](const MTPDmessageActionSetChatWallPaper &data) {
 		auto content = ActionSetChatWallPaper();
 		// #TODO wallpapers
+		content.same = data.is_same();
+		content.both = data.is_for_both();
 		result.content = content;
-	}, [&](const MTPDmessageActionSetSameChatWallPaper &data) {
-		result.content = ActionSetSameChatWallPaper();
 	}, [&](const MTPDmessageActionRequestedPeer &data) {
 		auto content = ActionRequestedPeer();
-		content.peerId = ParsePeerId(data.vpeer());
+		for (const auto &peer : data.vpeers().v) {
+			content.peers.push_back(ParsePeerId(peer));
+		}
 		content.buttonId = data.vbutton_id().v;
+		result.content = content;
+	}, [&](const MTPDmessageActionGiftCode &data) {
+		auto content = ActionGiftCode();
+		content.boostPeerId = data.vboost_peer()
+			? peerFromMTP(*data.vboost_peer())
+			: PeerId();
+		content.viaGiveaway = data.is_via_giveaway();
+		content.unclaimed = data.is_unclaimed();
+		content.months = data.vmonths().v;
+		content.code = data.vslug().v;
+		result.content = content;
+	}, [&](const MTPDmessageActionGiveawayLaunch &data) {
+		auto content = ActionGiveawayLaunch();
+		result.content = content;
+	}, [&](const MTPDmessageActionGiveawayResults &data) {
+		auto content = ActionGiveawayResults();
+		content.winners = data.vwinners_count().v;
+		content.unclaimed = data.vunclaimed_count().v;
 		result.content = content;
 	}, [](const MTPDmessageActionEmpty &data) {});
 	return result;
@@ -1358,15 +1518,19 @@ Message ParseMessage(
 			}
 			if (const auto replyTo = data.vreply_to()) {
 				replyTo->match([&](const MTPDmessageReplyHeader &data) {
-					result.replyToMsgId = data.vreply_to_msg_id().v;
-					result.replyToPeerId = data.vreply_to_peer_id()
-						? ParsePeerId(*data.vreply_to_peer_id())
-						: 0;
-					if (result.replyToPeerId == result.peerId) {
-						result.replyToPeerId = 0;
+					if (const auto replyToMsg = data.vreply_to_msg_id()) {
+						result.replyToMsgId = replyToMsg->v;
+						result.replyToPeerId = data.vreply_to_peer_id()
+							? ParsePeerId(*data.vreply_to_peer_id())
+							: 0;
+						if (result.replyToPeerId == result.peerId) {
+							result.replyToPeerId = 0;
+						}
+					} else {
+						// #TODO export replies
 					}
 				}, [&](const MTPDmessageReplyStoryHeader &data) {
-					// #TODO stories export
+					// #TODO export stories
 				});
 			}
 		}
@@ -1410,12 +1574,16 @@ Message ParseMessage(
 		}
 		if (const auto replyTo = data.vreply_to()) {
 			replyTo->match([&](const MTPDmessageReplyHeader &data) {
-				result.replyToMsgId = data.vreply_to_msg_id().v;
-				result.replyToPeerId = data.vreply_to_peer_id()
-					? ParsePeerId(*data.vreply_to_peer_id())
-					: PeerId(0);
+				if (const auto replyToMsg = data.vreply_to_msg_id()) {
+					result.replyToMsgId = replyToMsg->v;
+					result.replyToPeerId = data.vreply_to_peer_id()
+						? ParsePeerId(*data.vreply_to_peer_id())
+						: PeerId(0);
+				} else {
+					// #TODO export replies
+				}
 			}, [&](const MTPDmessageReplyStoryHeader &data) {
-				// #TODO stories export
+				// #TODO export stories
 			});
 		}
 		if (const auto viaBotId = data.vvia_bot_id()) {
@@ -1437,6 +1605,14 @@ Message ParseMessage(
 				result.media.thumb().file = File();
 			}
 			context.botId = 0;
+		}
+		if (const auto replyMarkup = data.vreply_markup()) {
+			replyMarkup->match([](const MTPDreplyKeyboardMarkup &) {
+			}, [&](const MTPDreplyInlineMarkup &data) {
+				result.inlineButtonRows = ButtonRowsFromTL(data);
+			}, [](const MTPDreplyKeyboardHide &) {
+			}, [](const MTPDreplyKeyboardForceReply &) {
+			});
 		}
 		result.text = ParseText(
 			data.vmessage(),
@@ -1507,6 +1683,8 @@ ContactsList ParseContactsList(const MTPVector<MTPSavedContact> &data) {
 			info.lastName = ParseString(data.vlast_name());
 			info.phoneNumber = ParseString(data.vphone());
 			info.date = data.vdate().v;
+			info.colorIndex = PeerColorIndex(
+				StringBarePeerId(info.phoneNumber));
 			return info;
 		});
 		result.list.push_back(std::move(info));
@@ -1724,6 +1902,7 @@ DialogsInfo ParseDialogsInfo(const MTPmessages_Dialogs &data) {
 				info.lastName = peer.user()
 					? peer.user()->info.lastName
 					: Utf8String();
+				info.colorIndex = peer.colorIndex();
 				info.input = peer.input();
 				info.migratedToChannelId = peer.chat()
 					? peer.chat()->migratedToChannelId
