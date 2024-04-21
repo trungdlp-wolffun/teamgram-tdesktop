@@ -112,7 +112,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 		UrlClickHandler::Open(url, context);
 	};
 	if (url.startsWith(u"tg2://"_q, Qt::CaseInsensitive)
-		|| url.startsWith(u"internal2:"_q, Qt::CaseInsensitive)) {
+		|| url.startsWith(u"internal:"_q, Qt::CaseInsensitive)) {
 		UrlClickHandler::Open(url, QVariant::fromValue([&] {
 			auto result = context.value<ClickHandlerContext>();
 			result.mayShowConfirmation = !base::IsCtrlPressed();
