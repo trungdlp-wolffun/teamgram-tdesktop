@@ -7,12 +7,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
-namespace Platform {
-namespace File {
-namespace internal {
 
-bool ShowXDPOpenWithDialog(const QString &filepath);
+namespace Ui {
+class GenericBox;
+} // namespace Ui
 
-} // namespace internal
-} // namespace File
-} // namespace Platform
+void CreateModerateMessagesBox(
+	not_null<Ui::GenericBox*> box,
+	const HistoryItemsList &items,
+	Fn<void()> confirmed);
+
+[[nodiscard]] bool CanCreateModerateMessagesBox(const HistoryItemsList &);
