@@ -349,7 +349,7 @@ void QrWidget::handleTokenResult(const MTPauth_LoginToken &result) {
 void QrWidget::showTokenError(const MTP::Error &error) {
 	_requestId = 0;
 	if (error.type() == u"SESSION_PASSWORD_NEEDED"_q) {
-		sendCheckPasswbordRequest();
+		sendCheckPasswordRequest();
 	} else if (base::take(_forceRefresh)) {
 		refreshCode();
 	} else {
