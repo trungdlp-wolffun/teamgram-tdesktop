@@ -20,8 +20,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/random.h"
 #include "base/options.h"
 #include "base/unixtime.h"
+#include "base/qt/qt_key_modifiers.h"
 #include "boxes/delete_messages_box.h"
 #include "boxes/max_invite_box.h"
+#include "boxes/moderate_messages_box.h"
 #include "boxes/choose_filter_box.h"
 #include "boxes/create_poll_box.h"
 #include "boxes/pin_messages_box.h"
@@ -93,7 +95,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_menu_icons.h"
 
 #include <QAction>
-#include <QtGui/QGuiApplication>
+#include <QtWidgets/QApplication>
 
 namespace Window {
 namespace {
@@ -134,7 +136,8 @@ void ShareBotGame(
 			MTPVector<MTPMessageEntity>(),
 			MTP_int(0), // schedule_date
 			MTPInputPeer(), // send_as
-			MTPInputQuickReplyShortcut()
+			MTPInputQuickReplyShortcut(),
+			MTPlong()
 		), [=](const MTPUpdates &, const MTP::Response &) {
 	}, [=](const MTP::Error &error, const MTP::Response &) {
 		history->session().api().sendMessageFail(error, history->peer);
@@ -1139,7 +1142,7 @@ void Filler::addCreatePoll() {
 			flag,
 			flag,
 			source,
-			sendMenuType);
+			{ sendMenuType });
 	};
 	_addAction(
 		tr::lng_polls_create(tr::now),
@@ -1237,12 +1240,36 @@ void Filler::addViewAsMessages() {
 	}
 	const auto peer = _peer;
 	const auto controller = _controller;
-	_addAction(tr::lng_forum_view_as_messages(tr::now), [=] {
+	const auto parentHideRequests = std::make_shared<rpl::event_stream<>>();
+	const auto filterOutChatPreview = [=] {
+		if (base::IsAltPressed()) {
+			const auto callback = [=](bool shown) {
+				if (!shown) {
+					parentHideRequests->fire({});
+				}
+			};
+			controller->showChatPreview({
+				peer->owner().history(peer),
+				FullMsgId(),
+			}, callback, QApplication::activePopupWidget());
+			return true;
+		}
+		return false;
+	};
+	const auto open = [=] {
 		if (const auto forum = peer->forum()) {
 			peer->owner().saveViewAsMessages(forum, true);
 		}
 		controller->showPeerHistory(peer->id);
-	}, &st::menuIconAsMessages);
+	};
+	auto to_instant = rpl::map_to(anim::type::instant);
+	_addAction({
+		.text = tr::lng_forum_view_as_messages(tr::now),
+		.handler = open,
+		.icon = &st::menuIconAsMessages,
+		.triggerFilter = filterOutChatPreview,
+		.hideRequests = parentHideRequests->events() | to_instant
+	});
 }
 
 void Filler::addViewAsTopics() {
@@ -1587,7 +1614,7 @@ void PeerMenuCreatePoll(
 		PollData::Flags chosen,
 		PollData::Flags disabled,
 		Api::SendType sendType,
-		SendMenu::Type sendMenuType) {
+		SendMenu::Details sendMenuDetails) {
 	if (peer->isChannel() && !peer->isMegagroup()) {
 		chosen &= ~PollData::Flag::PublicVotes;
 		disabled |= PollData::Flag::PublicVotes;
@@ -1597,7 +1624,7 @@ void PeerMenuCreatePoll(
 		chosen,
 		disabled,
 		sendType,
-		sendMenuType);
+		sendMenuDetails);
 	const auto weak = Ui::MakeWeak(box.data());
 	const auto lock = box->lifetime().make_state<bool>(false);
 	box->submitRequests(
@@ -2069,17 +2096,14 @@ QPointer<Ui::BoxContent> ShowForwardMessagesBox(
 
 			state->menu->addSeparator();
 		}
-		const auto type = sendMenuType();
-		const auto result = SendMenu::FillSendMenu(
+		state->menu->setForcedVerticalOrigin(
+			Ui::PopupMenu::VerticalOrigin::Bottom);
+		SendMenu::FillSendMenu(
 			state->menu.get(),
-			type,
-			SendMenu::DefaultSilentCallback(submit),
-			SendMenu::DefaultScheduleCallback(show, type, submit),
-			SendMenu::DefaultWhenOnlineCallback(submit));
-		const auto success = (result == SendMenu::FillMenuResult::Success);
-		if (showForwardOptions || success) {
-			state->menu->setForcedVerticalOrigin(
-				Ui::PopupMenu::VerticalOrigin::Bottom);
+			show,
+			SendMenu::Details{ sendMenuType() },
+			SendMenu::DefaultCallback(show, crl::guard(parent, submit)));
+		if (showForwardOptions || !state->menu->empty()) {
 			state->menu->popup(QCursor::pos());
 		}
 	};
@@ -2281,7 +2305,9 @@ QPointer<Ui::BoxContent> ShowSendNowMessagesBox(
 	](Fn<void()> &&close) {
 		close();
 		auto ids = QVector<MTPint>();
-		for (const auto item : session->data().idsToItems(list)) {
+		auto sorted = session->data().idsToItems(list);
+		ranges::sort(sorted, ranges::less(), &HistoryItem::date);
+		for (const auto &item : sorted) {
 			if (item->allowsSendNow()) {
 				ids.push_back(
 					MTP_int(session->scheduledMessages().lookupId(item)));
@@ -2547,9 +2573,7 @@ Fn<void()> ClearHistoryHandler(
 Fn<void()> DeleteAndLeaveHandler(
 		not_null<Window::SessionController*> controller,
 		not_null<PeerData*> peer) {
-	return [=] {
-		controller->show(Box<DeleteMessagesBox>(peer, false));
-	};
+	return [=] { controller->show(Box(DeleteChatBox, peer)); };
 }
 
 void FillDialogsEntryMenu(
